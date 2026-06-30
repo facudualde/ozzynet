@@ -13,14 +13,11 @@ setup:
 	chmod u+x entrypoint.sh
 
 sync:
-	test -d .venv || python3 -m venv .venv
-	.venv/bin/pip install --upgrade pip
-	if grep -q '^torch$$' requirements.txt; then
-		echo "ERROR: 'torch' is uncommented in requirements.txt — comment it out first."
-		exit 1
-	fi
-	.venv/bin/pip install -r requirements.txt
-	.venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu
+	@test -d .venv || python3 -m venv .venv
+	@.venv/bin/pip install --upgrade pip --quiet > /dev/null
+	@echo "Installing dependencies (this may take a minute)..."
+	@.venv/bin/pip install -r requirements.txt --quiet > /dev/null
+	@.venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu --quiet > /dev/null
 	@echo ""
 	@echo "Editor venv ready at .venv/"
 	@echo "To use it in your shell: source .venv/bin/activate"

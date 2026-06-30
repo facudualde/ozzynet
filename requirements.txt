@@ -1,4 +1,3 @@
-# torch (provided by the rocm/pytorch base image; do NOT install from PyPI)
 pydub
 librosa
 matplotlib
