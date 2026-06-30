@@ -7,137 +7,90 @@ verifies that PyTorch can see your AMD card.
 ## Prerequisites
 
 - Linux host with an AMD GPU supported by ROCm.
-- `amdgpu` driver loaded and `/dev/kfd` + `/dev/dri/renderD*` present.
-  Verify with:
-  ```
-  ls /dev/kfd /dev/dri/
-  rocm-smi
-  ```
-- Docker (with Compose v2).
-- Your user in the `video` and `render` groups:
-  ```
-  sudo usermod -aG video,render $USER
-  ```
-  then log out and back in.
+- `amdgpu` driver loaded and `/dev/kfd` + `/dev/dri/renderD*` present (`ls /dev/kfd /dev/dri/`).
+- Docker with Compose v2.
+- Your user in the `video` and `render` groups: `sudo usermod -aG video,render $USER`, then log out/in.
 
 ## Quick start
 
 ```
-git clone <repo-url> ozzynet
-cd ozzynet
-make setup        # writes .env from your host uid/gid/groups
-# edit .env and set HSA_OVERRIDE_GFX_VERSION for your GPU (see table below)
-make up
+git clone <repo-url> ozzynet && cd ozzynet
+make setup        # writes .env from host uid/gid/groups
+# edit .env and set HSA_OVERRIDE_GFX_VERSION for your GPU (table below)
+make sync         # creates .venv/ with CPU torch + non-torch deps (editor only)
+make up           # builds and starts the ROCm container
 make health       # runs src/health.py: GPU detect + CPU/GPU matmul benchmark
 ```
 
 ## Configuration: `HSA_OVERRIDE_GFX_VERSION`
 
-ROCm 6.0+ dropped official support for several consumer RDNA cards. If your
-GPU is not officially supported, set `HSA_OVERRIDE_GFX_VERSION` in `.env` to
-make the ROCm userspace accept it.
+ROCm 6.0+ dropped several consumer RDNA cards. Set this in `.env` to the
+matching value:
 
-| GPU family                  | Models                                | GFX version |
-|-----------------------------|---------------------------------------|-------------|
-| RDNA 1                      | RX 5700 / 5700 XT                     | `10.1.0`    |
-| RDNA 2 (Navi 21/22/23/24)   | RX 6600 / 6700 XT / 6800 / 6900 XT    | `10.3.0`    |
-| RDNA 2 (Navi 31/32/33)      | RX 7900 XT / 7900 XTX                 | `11.0.0`    |
-| RDNA 3                      | RX 7600 / 7700 XT / 7800 XT / 7900 XT | `11.0.0`    |
-| Vega                        | RX Vega 56 / 64, Vega VII             | `9.0.0`     |
-
-If your model is not listed, find the GFX target with:
-
-```
-rocminfo | grep -A1 "Marketing Name"
-```
-
-and set `HSA_OVERRIDE_GFX_VERSION` to match the `Name` field on the GPU
-agent (e.g. `gfx1032` -> `10.3.0`).
+| GPU family | Models | GFX version |
+|---|---|---|
+| RDNA 1 | RX 5700 / 5700 XT | `10.1.0` |
+| RDNA 2 (Navi 21-24) | RX 6600 / 6700 XT / 6800 / 6900 XT | `10.3.0` |
+| RDNA 2 (Navi 31-33) | RX 7900 XT / 7900 XTX | `11.0.0` |
+| RDNA 3 | RX 7600 / 7700 XT / 7800 XT / 7900 XT | `11.0.0` |
+| Vega | RX Vega 56 / 64, Vega VII | `9.0.0` |
 
 ## Makefile targets
 
-| Target      | What it does                                                      |
-|-------------|-------------------------------------------------------------------|
-| `make setup` | Generates `.env` from host uid/gid and group ids; chmods entrypoint. |
-| `make up`    | Starts the `pytorch` container in the background.                |
-| `make down`  | Stops and removes the container.                                 |
-| `make shell` | Opens an interactive bash session inside the container.          |
-| `make health`| Runs `src/health.py`: detects GPU, benchmarks CPU vs GPU matmul. |
-| `make clean` | Stops the container, removes `.env` and Python bytecode caches.  |
-
-`make setup` is idempotent only on first run; re-run after `make clean` or
-after changing groups on the host.
+| Target | What it does |
+|---|---|
+| `make setup` | Writes `.env` from host uid/gid/groups; chmods entrypoint. |
+| `make sync` | Creates `.venv/`, installs `requirements.txt` deps, adds a CPU-only `torch` wheel for the editor. Refuses to run if `torch` is uncommented in `requirements.txt`. **Editor only — never run the project from the venv.** |
+| `make up` | Builds and starts the ROCm container. |
+| `make down` | Stops and removes the container. |
+| `make shell` | Opens a bash session inside the container. |
+| `make health` | Runs `src/health.py` (GPU detect + CPU/GPU matmul benchmark). |
+| `make clean` | Stops the container; removes `.env`, `.venv/`, and Python bytecode caches. |
 
 ## Project structure
 
 ```
 .
 ├── docker-compose.yml    # rocm/pytorch service with /dev/kfd + /dev/dri passthrough
-├── entrypoint.sh         # creates matching groups inside the container, chroots to host user
-├── makefile              # see "Makefile targets" above
-├── requirements.txt      # torch (pinned by the chosen image)
+├── Dockerfile            # extends base image with ffmpeg + pip install requirements.txt
+├── entrypoint.sh         # creates matching groups, chroots to host user
+├── makefile
+├── requirements.txt      # torch commented (from image); pydub, librosa, matplotlib, numpy
 ├── src/
-│   └── health.py         # device detection + CPU/GPU matmul benchmark
-└── .env                  # generated by `make setup`, gitignored
+│   └── health.py
+├── .env                  # generated by `make setup`, gitignored
+├── .venv/                # generated by `make sync`, gitignored (editor only)
+└── pyrightconfig.json    # optional; points Pyright at the editor venv
 ```
 
 ## IDE / editor setup
 
-The code in this project is intended to run inside the Docker container
-(see `docker-compose.yml`). Your local editor — VS Code, PyCharm, Neovim
-with LSP, etc. — does not have access to that environment, so it will
-report missing imports for `torch` and any other library that only lives
-inside the container:
+Code runs inside the container; your editor runs on the host. To silence
+"Import 'torch' could not be resolved" diagnostics, run `make sync`. It
+creates a `.venv/` with a CPU-only `torch` wheel matching the API surface
+of the ROCm build, so autocomplete, hover, and go-to-definition all work
+once your editor is pointed at `.venv/bin/python`.
 
-```
-Import "torch" could not be resolved
-ModuleNotFoundError: No module named 'torch'
-```
-
-These warnings are expected and do **not** affect the actual run, since
-`make up` / `make shell` / `make health` execute inside the container
-where everything is already installed.
-
-If you want your editor to stop complaining, create a local virtualenv
-and install a CPU-only build of PyTorch just for type-checking and
-auto-completion:
-
-```
-python3 -m venv .venv
-source .venv/bin/activate
-pip install torch --index-url https://download.pytorch.org/whl/cpu
-```
-
-The CPU wheel is small (~200 MB) and matches the API surface of the
-ROCm build used inside the container, so autocomplete, type hints, and
-jump-to-definition will all work. Do **not** use this venv to run the
-project — always use `make` so the container's ROCm-enabled PyTorch is
-used for actual execution.
+**Don't run the project from the venv.**
 
 ## Troubleshooting
 
-### `No GPU detected — check /dev/kfd and /dev/dri mounts`
+### No GPU detected
 
-`torch.cuda.is_available()` returned `False`. Walk through:
+`torch.cuda.is_available()` returned False.
 
-1. On the host: `ls /dev/kfd /dev/dri/` should list `kfd` and at least one
-   `renderD*` node. If missing, the `amdgpu` kernel driver is not loaded.
-2. On the host: `rocm-smi` should show your card. If it doesn't, install
-   the ROCm userspace or fix the kernel driver first.
-3. Inside the container (`make shell`): run `ls /dev/kfd /dev/dri/` again.
-   If the devices are missing, recreate with `make down && make up` (the
-   `devices:` block in `docker-compose.yml` must take effect at creation).
-4. Check `HSA_OVERRIDE_GFX_VERSION` in `.env` matches your GPU (table above).
+1. `ls /dev/kfd /dev/dri/` on the host (must list `kfd` and `renderD*`).
+2. `rocm-smi` on the host must show your card.
+3. `make shell`, then `ls /dev/kfd /dev/dri/` inside the container.
+4. Check `HSA_OVERRIDE_GFX_VERSION` in `.env` matches your GPU.
 
-### Segmentation fault during GPU benchmark
+### Segfault during GPU benchmark
 
-Your GPU is detected but the ROCm userspace is not compiled for its ISA.
-Either set `HSA_OVERRIDE_GFX_VERSION` to the matching value, or pick an
-older `DOCKER_IMAGE` in `.env` whose ROCm version still supports your card
-(e.g. `rocm/pytorch:rocm5.7_ubuntu22.04_py3.10_pytorch_2.0.1`).
+GPU detected but the ROCm userspace isn't compiled for its ISA. Either
+set `HSA_OVERRIDE_GFX_VERSION` to the matching value, or pin an older
+`DOCKER_IMAGE` (e.g. `rocm/pytorch:rocm5.7_ubuntu22.04_py3.10_pytorch_2.0.1`).
 
 ### `docker compose` fails with "permission denied"
 
-Your user cannot talk to the Docker daemon. Either add yourself to the
-`docker` group (`sudo usermod -aG docker $USER`, then log out/in), or
-prefix the command with `sudo`.
+Add yourself to the `docker` group (`sudo usermod -aG docker $USER`,
+then log out/in) or prefix commands with `sudo`.

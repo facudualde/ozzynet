@@ -1,7 +1,13 @@
 # flags from https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/3rd-party/pytorch-install.html
 services:
   pytorch:
-    image: "${DOCKER_IMAGE}"
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        DOCKER_IMAGE: "${DOCKER_IMAGE}"
+    image: ozzynet-pytorch
+    pull_policy: build
     container_name: ozzynet-pytorch
     user: "root"
     cap_add:
