@@ -1,0 +1,30 @@
+# flags from https://rocm.docs.amd.com/projects/install-on-linux/en/latest/install/3rd-party/pytorch-install.html
+services:
+  pytorch:
+    image: "${DOCKER_IMAGE}"
+    container_name: ozzynet-pytorch
+    user: "root"
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp=unconfined
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    group_add:
+      - "${VIDEO_GID}"
+      - "${RENDER_GID}"
+    ipc: host
+    shm_size: 8G
+    env_file:
+      - .env
+    environment:
+      PYTHONUNBUFFERED: "1"
+      TOKENIZERS_PARALLELISM: "false"
+    volumes:
+      - ./:/workspace
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    entrypoint: ./entrypoint.sh
+    command: ["bash"]
