@@ -2,3 +2,4 @@ pydub
 librosa
 matplotlib
 numpy
+kagglehub==0.3.13

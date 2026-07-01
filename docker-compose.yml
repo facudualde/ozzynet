@@ -6,10 +6,12 @@ services:
       dockerfile: Dockerfile
       args:
         DOCKER_IMAGE: "${DOCKER_IMAGE}"
+        VIDEO_GID: "${VIDEO_GID}"
+        RENDER_GID: "${RENDER_GID}"
     image: ozzynet-pytorch
     pull_policy: build
     container_name: ozzynet-pytorch
-    user: "root"
+    user: "${UID}:${GID}"
     cap_add:
       - SYS_PTRACE
     security_opt:
