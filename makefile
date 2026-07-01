@@ -43,6 +43,9 @@ shell:
 health:
 	docker compose exec pytorch python3 src/health.py
 
+dataset:
+	docker compose exec pytorch python3 src/dataset.py
+
 # TODO
 # train:
 	# docker compose exec pytorch python3 src/train.py
