@@ -31,8 +31,8 @@ def process_song(wav_path: str, song_output_dir: str) -> tuple[str, str]:
   sr = int(sr)
   samples_per_window = int(WINDOW_LENGTH_MS / 1000 * sr)
 
-  for count in range(1, SEGMENTS_PER_SONG + 1):
-    start_sample = (count - 1) * samples_per_window
+  for count in range(0, SEGMENTS_PER_SONG):
+    start_sample = count * samples_per_window
     end_sample = start_sample + samples_per_window
     if end_sample > len(y_full):
         y_segment = np.pad(y_full[start_sample:], (0, end_sample - len(y_full)))
