@@ -1,5 +1,3 @@
-WORKDIR /ozzynet
-
 # This is just a default value in case the env
 # variable is absent.
 ARG DOCKER_IMAGE=rocm/pytorch:latest
@@ -16,6 +14,8 @@ ARG VIDEO_GID=44
 ARG RENDER_GID=992
 RUN getent group ${VIDEO_GID}  >/dev/null || groupadd -g ${VIDEO_GID}  host_video; \
     getent group ${RENDER_GID} >/dev/null || groupadd -g ${RENDER_GID} host_render
+
+WORKDIR /ozzynet
 
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
