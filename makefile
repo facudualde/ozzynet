@@ -22,6 +22,8 @@ sync:
 	@echo "Editor venv ready at .venv/"
 	@echo "To use it in your shell: source .venv/bin/activate"
 
+.PHONY: clean
+
 clean:
 	docker compose down --remove-orphans
 	find . -type d -name "__pycache__" -exec rm -rf {} +
@@ -30,8 +32,10 @@ clean:
 	find . -type f -name "*.pyd" -delete
 	rm -f .env
 	rm -rf .venv
+	rm -rf spectrograms
 
 up:
+	mkdir -p spectrograms
 	docker compose up -d
 
 down:
@@ -42,6 +46,8 @@ shell:
 
 health:
 	docker compose exec pytorch python3 src/health.py
+
+.PHONY: spectrograms
 
 spectrograms:
 	docker compose exec pytorch python3 src/spectrograms.py

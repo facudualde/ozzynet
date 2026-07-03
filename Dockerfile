@@ -1,3 +1,5 @@
+WORKDIR /ozzynet
+
 # This is just a default value in case the env
 # variable is absent.
 ARG DOCKER_IMAGE=rocm/pytorch:latest

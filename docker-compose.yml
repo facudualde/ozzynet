@@ -30,8 +30,10 @@ services:
       PYTHONUNBUFFERED: "1"
       TOKENIZERS_PARALLELISM: "false"
     volumes:
-      - ./:/workspace
-    working_dir: /workspace
+      - ./src/:/ozzynet/src
+      - ./data/:/ozzynet/data
+      - ./spectrograms/:/ozzynet/spectrograms
+      - ./entrypoint.sh:/ozzynet/entrypoint.sh
     stdin_open: true
     tty: true
     entrypoint: ./entrypoint.sh
