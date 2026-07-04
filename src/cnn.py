@@ -39,7 +39,7 @@ class InceptionV3(nn.Module):
         param.requires_grad = True
 
   def forward(self, x: torch.Tensor) -> torch.Tensor:
-    return self.backbone(x)[0]
+    return self.backbone(x)
 
   def trainable_parameters(self):
     return filter(lambda p: p.requires_grad, self.parameters())

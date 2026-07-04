@@ -33,7 +33,9 @@ services:
       - ./src/:/ozzynet/src
       - ./data/:/ozzynet/data
       - ./spectrograms/:/ozzynet/spectrograms
+      - ./checkpoints/:/ozzynet/checkpoints
       - ./entrypoint.sh:/ozzynet/entrypoint.sh
+      - /etc/localtime:/etc/localtime:ro
     stdin_open: true
     tty: true
     entrypoint: ./entrypoint.sh

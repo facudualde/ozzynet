@@ -23,7 +23,6 @@ sync:
 	@echo "To use it in your shell: source .venv/bin/activate"
 
 .PHONY: clean
-
 clean:
 	docker compose down --remove-orphans
 	find . -type d -name "__pycache__" -exec rm -rf {} +
@@ -36,6 +35,7 @@ clean:
 
 up:
 	mkdir -p spectrograms
+	mkdir -p checkpoints
 	docker compose up -d
 
 down:
@@ -48,9 +48,13 @@ health:
 	docker compose exec pytorch python3 src/health.py
 
 .PHONY: spectrograms
-
 spectrograms:
 	docker compose exec pytorch python3 src/spectrograms.py
+
+BATCH_SIZE ?= 32
+EPOCHS     ?= 50
+fine_tuning:
+	docker compose exec pytorch python3 src/fine_tuning.py $(BATCH_SIZE) $(EPOCHS)
 
 # TODO
 # train:
