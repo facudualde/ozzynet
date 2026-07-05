@@ -95,20 +95,21 @@ def loop(train_dataloader, val_dataloader, model, loss_fn, optimizer, epochs):
   print(f"Model saved to: {save_path}")
 
 def setup():
-  batch_size = int(sys.argv[1])
-  epochs = int(sys.argv[2])
+    batch_size = int(sys.argv[1])
+    epochs = int(sys.argv[2])
 
-  train_ds = GTZANDataset(split="train", seed=42)
-  val_ds   = GTZANDataset(split="val", seed=42)
+    # Instanciación nativa e independiente de cada conjunto
+    train_ds = GTZANDataset(split="train")
+    val_ds   = GTZANDataset(split="val")
 
-  train_dataloader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
-  val_dataloader   = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
+    train_dataloader = DataLoader(train_ds, batch_size=batch_size, shuffle=True) # IMPORTANTE: pon shuffle=True aquí
+    val_dataloader   = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
 
-  model = InceptionV3().to(device)
-  loss_fn = nn.CrossEntropyLoss()
-  optimizer = torch.optim.Adam(model.trainable_parameters(), lr=1e-4)
+    model = InceptionV3().to(device)
+    loss_fn = nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.trainable_parameters(), lr=1e-4)
 
-  loop(train_dataloader, val_dataloader, model, loss_fn, optimizer, epochs)
-
+    loop(train_dataloader, val_dataloader, model, loss_fn, optimizer, epochs)
+    
 if __name__ == "__main__":
   setup()

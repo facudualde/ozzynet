@@ -7,7 +7,7 @@ from torch.utils.data import Dataset as TorchDataset
 from torchvision.models import Inception_V3_Weights
 
 class GTZANDataset(TorchDataset):
-    """GTZAN dataset structured by song to avoid data leakage."""
+    """Dataset GTZAN estructurado por canciones para evitar Data Leakage."""
 
     GENRES = [
         "blues", "classical", "country", "disco", "hiphop",
@@ -18,12 +18,12 @@ class GTZANDataset(TorchDataset):
     def __init__(
         self,
         root: str = "spectrograms",
-        split: str = "train",  # Must be "train" or "val"
+        split: str = "train",  # Puede ser "train" o "val"
         val_ratio: float = 0.2,
         seed: int = 42,
         t: transforms.Transform | None = None,
     ) -> None:
-        assert split in ["train", "val"], "the 'split' parameter must be 'train' or 'val'"
+        assert split in ["train", "val"], "El parámetro 'split' debe ser 'train' o 'val'"
         
         if t is None:
             inceptionV3_w_t = Inception_V3_Weights.DEFAULT.transforms()
@@ -38,11 +38,11 @@ class GTZANDataset(TorchDataset):
         self.t: transforms.Transform = t
         self.split = split
 
-        # Build and filter samples by split, atomically per song.
+        # Construir y filtrar las muestras según el split de forma atómica
         self.samples = self._build_split_samples(val_ratio, seed)
 
         if not self.samples:
-            raise FileNotFoundError(f"No spectrograms found for split '{split}' under {self.root}")
+            raise FileNotFoundError(f"No se encontraron espectrogramas para el split '{split}' en {self.root}")
 
     def _build_split_samples(self, val_ratio: float, seed: int) -> list[tuple[str, int]]:
         samples: list[tuple[str, int]] = []
@@ -53,16 +53,16 @@ class GTZANDataset(TorchDataset):
             if not genre_dir.is_dir():
                 continue
 
-            # Get song folder names (e.g., "blues.00000").
+            # Obtener nombres de carpetas de canciones (ej: "blues.00000")
             song_names = sorted([d.name for d in genre_dir.iterdir() if d.is_dir()])
             rng.shuffle(song_names)
 
-            # Strictly split the song names into train vs. val.
-            val_len = round(len(song_names) * val_ratio)
+            # Separar estrictamente los nombres de las canciones
+            val_len = int(len(song_names) * val_ratio)
             val_song_names = set(song_names[:val_len])
 
             for song_name in song_names:
-                # Filter at the song level according to the constructor's split argument.
+                # Filtrar a nivel de canción según el split solicitado en el constructor
                 if self.split == "val" and song_name not in val_song_names:
                     continue
                 if self.split == "train" and song_name in val_song_names:
@@ -73,7 +73,7 @@ class GTZANDataset(TorchDataset):
                 for img_path in images:
                     samples.append((str(img_path), self.GENRE_TO_IDX[genre]))
 
-        print(f"Instantiated split '{self.split}': {len(samples)} images loaded.")
+        print(f"Instanciado split '{self.split}': {len(samples)} imágenes cargadas.")
         return samples
 
     def __len__(self) -> int:
