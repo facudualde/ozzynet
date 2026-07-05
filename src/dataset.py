@@ -1,18 +1,13 @@
+import random
 from pathlib import Path
-
 import torch
 from torchvision.transforms import v2 as transforms
 from PIL import Image
-from torch.utils.data import Dataset as TorchDataset, random_split
+from torch.utils.data import Dataset as TorchDataset
 from torchvision.models import Inception_V3_Weights
 
 class GTZANDataset(TorchDataset):
-    """GTZAN music genre classification dataset.
-    Each sample is a 299x299 spectrogram labeled by genre. On
-    construction, walks ``spectrograms/``, applies the default
-    transform, and exposes ``self.train`` / ``self.val`` via
-    ``random_split``.
-    """
+    """GTZAN dataset structured by song to avoid data leakage."""
 
     GENRES = [
         "blues", "classical", "country", "disco", "hiphop",
@@ -23,52 +18,62 @@ class GTZANDataset(TorchDataset):
     def __init__(
         self,
         root: str = "spectrograms",
+        split: str = "train",  # Must be "train" or "val"
         val_ratio: float = 0.2,
         seed: int = 42,
-        t: transforms.Transform | None =None,
+        t: transforms.Transform | None = None,
     ) -> None:
+        assert split in ["train", "val"], "the 'split' parameter must be 'train' or 'val'"
+        
         if t is None:
             inceptionV3_w_t = Inception_V3_Weights.DEFAULT.transforms()
             t = transforms.Compose([
+                transforms.Resize((299, 299)),
                 transforms.ToImage(),
                 transforms.ToDtype(torch.float32, scale=True),
-                # Inception v3 expects these (its ImageNet pretraining stats).
-                transforms.Normalize(
-                    inceptionV3_w_t.mean,
-                    inceptionV3_w_t.std,
-                ),
+                transforms.Normalize(inceptionV3_w_t.mean, inceptionV3_w_t.std),
             ])
+            
         self.root = Path(root)
         self.t: transforms.Transform = t
-        self.samples = self._build_samples()
+        self.split = split
+
+        # Build and filter samples by split, atomically per song.
+        self.samples = self._build_split_samples(val_ratio, seed)
 
         if not self.samples:
-            raise FileNotFoundError(f"No spectrograms found under {self.root}")
+            raise FileNotFoundError(f"No spectrograms found for split '{split}' under {self.root}")
 
-        total = len(self.samples)
-        val_len = int(total * val_ratio)
-        train_len = total - val_len
-
-        generator = torch.Generator().manual_seed(seed)
-        self.train, self.val = random_split(
-            self, [train_len, val_len], generator=generator
-        )
-
-    def __iter__(self):
-        yield self.train
-        yield self.val
-
-    def _build_samples(self) -> list[tuple[str, int]]:
+    def _build_split_samples(self, val_ratio: float, seed: int) -> list[tuple[str, int]]:
         samples: list[tuple[str, int]] = []
+        rng = random.Random(seed)
+
         for genre in self.GENRES:
             genre_dir = self.root / genre
             if not genre_dir.is_dir():
                 continue
-            for song_dir in sorted(genre_dir.iterdir()):
-                if not song_dir.is_dir():
+
+            # Get song folder names (e.g., "blues.00000").
+            song_names = sorted([d.name for d in genre_dir.iterdir() if d.is_dir()])
+            rng.shuffle(song_names)
+
+            # Strictly split the song names into train vs. val.
+            val_len = round(len(song_names) * val_ratio)
+            val_song_names = set(song_names[:val_len])
+
+            for song_name in song_names:
+                # Filter at the song level according to the constructor's split argument.
+                if self.split == "val" and song_name not in val_song_names:
                     continue
-                for img_path in sorted(song_dir.glob("*.png")):
+                if self.split == "train" and song_name in val_song_names:
+                    continue
+
+                song_dir = genre_dir / song_name
+                images = sorted(song_dir.glob("*.png"))
+                for img_path in images:
                     samples.append((str(img_path), self.GENRE_TO_IDX[genre]))
+
+        print(f"Instantiated split '{self.split}': {len(samples)} images loaded.")
         return samples
 
     def __len__(self) -> int:

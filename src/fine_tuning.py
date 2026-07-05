@@ -98,15 +98,15 @@ def setup():
   batch_size = int(sys.argv[1])
   epochs = int(sys.argv[2])
 
-  ds = GTZANDataset()
-  train_ds, val_ds = ds
+  train_ds = GTZANDataset(split="train", seed=42)
+  val_ds   = GTZANDataset(split="val", seed=42)
 
-  train_dataloader = DataLoader(train_ds, batch_size=batch_size)
-  val_dataloader   = DataLoader(val_ds, batch_size=batch_size)
+  train_dataloader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+  val_dataloader   = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
 
   model = InceptionV3().to(device)
   loss_fn = nn.CrossEntropyLoss()
-  optimizer = torch.optim.Adam(model.trainable_parameters())
+  optimizer = torch.optim.Adam(model.trainable_parameters(), lr=1e-4)
 
   loop(train_dataloader, val_dataloader, model, loss_fn, optimizer, epochs)
 

@@ -51,8 +51,8 @@ health:
 spectrograms:
 	docker compose exec pytorch python3 src/spectrograms.py
 
-BATCH_SIZE ?= 32
-EPOCHS     ?= 50
+BATCH_SIZE ?= 64
+EPOCHS     ?= 30
 fine_tuning:
 	docker compose exec pytorch python3 src/fine_tuning.py $(BATCH_SIZE) $(EPOCHS)
 

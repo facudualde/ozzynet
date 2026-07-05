@@ -4,15 +4,7 @@ from torchvision import models
 from torchvision.models import Inception_V3_Weights
 
 class InceptionV3(nn.Module):
-  """Inception v3 fine-tuned for GTZAN genre classification.
-
-  Backbone: torchvision's Inception v3 pretrained on ImageNet. The
-  auxiliary classifier is kept in the loaded architecture (torchvision
-  requires it when loading pretrained weights) but disabled at forward
-  time and frozen during training.
-  Head: replaced with a ``num_classes``-way Linear layer.
-  All original parameters are frozen; only the new head is trainable.
-  """
+  """Inception v3 fine-tuned for GTZAN genre classification."""
 
   NUM_GENRES = 10
 
@@ -24,22 +16,36 @@ class InceptionV3(nn.Module):
     super().__init__()
 
     weights = Inception_V3_Weights.DEFAULT
+    
+    # Load the base model. Keep aux_logits=True temporarily so torchvision accepts the pretrained weights.
     self.backbone = models.inception_v3(weights=weights, aux_logits=True)
-    # `fc` is the final "fully connected" layer; we swap it for a 10-class head.
+
+    # Replace the final classification layer with our 10-genre head.
     self.backbone.fc = nn.Linear(self.backbone.fc.in_features, num_classes)
-    # Disable the aux branch since fine-tuning doesn't need it.
-    self.backbone.aux_logits = False
 
     if freeze_backbone:
-      # Freeze the pretrained backbone so its weights aren't updated during training.
+      # First: freeze every parameter of the original backbone.
       for param in self.backbone.parameters():
         param.requires_grad = False
-      # Only the new classification head will be trained.
+
+      # Second: explicitly disable gradients on the internal auxiliary block.
+      if self.backbone.AuxLogits is not None:
+        for param in self.backbone.AuxLogits.parameters():
+          param.requires_grad = False
+
+      # Third: force the new FC layer to be trainable.
       for param in self.backbone.fc.parameters():
         param.requires_grad = True
 
   def forward(self, x: torch.Tensor) -> torch.Tensor:
-    return self.backbone(x)
+    # When the model is in training mode (model.train()), torchvision's InceptionV3
+    # returns an InceptionOutputs named tuple with .logits and .aux_logits.
+    # To avoid issues with CrossEntropyLoss, we extract only the main logits.
+    if self.training:
+      output = self.backbone(x)
+      return output.logits  # Extracts the output of the 10-class main classifier.
+    else:
+      return self.backbone(x)  # In model.eval() it returns a plain Tensor directly.
 
   def trainable_parameters(self):
     return filter(lambda p: p.requires_grad, self.parameters())
