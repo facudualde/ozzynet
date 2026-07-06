@@ -16,11 +16,12 @@ MAX_WORKERS = 4
 
 
 def generate_spectrogram(y: np.ndarray, sr: int, output_path: str) -> None:
-    stft = librosa.stft(y)
-    stft_db = librosa.amplitude_to_db(np.abs(stft), ref=np.max)
+    # Usar escala Mel con 128 bancos de filtros (es el estándar de la industria)
+    mel_spec = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128, fmax=sr/2)
+    mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
 
     fig, ax = plt.subplots(figsize=IMG_SIZE_INCHES, dpi=DPI)
-    librosa.display.specshow(stft_db, sr=sr, x_axis=None, y_axis=None, ax=ax)
+    librosa.display.specshow(mel_spec_db, sr=sr, x_axis=None, y_axis=None, ax=ax, fmax=sr/2)
     ax.set_axis_off()
     ax.set_aspect("auto")
     fig.savefig(output_path, dpi=DPI, pad_inches=0)

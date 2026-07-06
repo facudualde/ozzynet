@@ -7,40 +7,45 @@ from torch import nn
 from torch.utils.data import DataLoader
 from cnn import InceptionV3
 from dataset import GTZANDataset
+from sklearn.metrics import classification_report, confusion_matrix
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def format_duration(seconds: float) -> str:
   return str(timedelta(seconds=int(seconds)))
 
-def train(train_dataloader, model, loss_fn, optimizer):
-  model.train()
-  size = len(train_dataloader.dataset)
-  total_batches = len(train_dataloader)
-
-  for batch, (X, y) in enumerate(train_dataloader):
-    X, y = X.to(device), y.to(device)
-
-    pred = model(X)
-    loss = loss_fn(pred, y)
-
-    loss.backward()
-    optimizer.step()
-    optimizer.zero_grad()
-
-    if batch % 10 == 0:
-      current = (batch + 1) * len(X)
-      pct = 100.0 * (batch + 1) / total_batches
-      bar_width = 20
-      filled = int(bar_width * (batch + 1) / total_batches)
-      bar = f"[{'#' * filled}{'-' * (bar_width - filled)}]"
-      print(
-        f"\r  {bar} {pct:5.1f}% "
-        f"loss={loss.item():.4f} [{current:>5d}/{size:>5d}]",
-        end="", flush=True,
-      )
-
-  print()
+def train(dataloader, model, loss_fn, optimizer):
+    model.train()
+    total_loss = 0
+    correct = 0  # <--- Agregamos contador de aciertos
+    total = 0    # <--- Agregamos contador de muestras totales
+    
+    for batch, (X, y) in enumerate(dataloader):
+        X, y = X.to(device), y.to(device)
+        
+        # Forward pass
+        pred = model(X)
+        loss = loss_fn(pred, y)
+        
+        # Backward pass
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        
+        # Métricas del batch
+        total_loss += loss.item()
+        
+        # --- NUEVA LÓGICA DE MÉTRICAS EN TRAIN ---
+        correct += (pred.argmax(1) == y).type(torch.float).sum().item()
+        total += y.size(0)
+        # ----------------------------------------
+        
+    # Calculamos los promedios finales de la época de entrenamiento
+    avg_loss = total_loss / len(dataloader)
+    train_accuracy = (correct / total) * 100  # <--- Calculamos el porcentaje
+    
+    # Modificamos el print para que te muestre ambas métricas alineadas
+    print(f"Train Error: \n Accuracy: {train_accuracy:.1f}%, Avg loss: {avg_loss:.4f}")
 
 def validate(val_dataloader, model, loss_fn):
   size = len(val_dataloader.dataset)
@@ -60,6 +65,37 @@ def validate(val_dataloader, model, loss_fn):
     f"Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f} \n"
   )
 
+def final_evaluation(dataloader, model, genres_list):
+    """Ejecuta una evaluación exhaustiva generando la matriz de confusión 
+    
+    y las métricas de precisión, recall y f1-score por cada género.
+    """
+    print("\n" + "="*60)
+    print("INICIANDO EVALUACIÓN FINAL DE MÉTRICAS DETALLADAS")
+    print("="*60)
+    
+    model.eval()
+    all_preds = []
+    all_labels = []
+    
+    with torch.no_grad():
+        for X, y in dataloader:
+            X = X.to(device)
+            pred = model(X)
+            
+            # Guardamos las predicciones y las etiquetas reales
+            all_preds.extend(pred.argmax(1).cpu().numpy())
+            all_labels.extend(y.numpy())
+            
+    # 1. Reporte de Clasificación (Precisión, Recall, F1-Score)
+    print("\n--- REPORTE DE CLASIFICACIÓN POR GÉNERO ---")
+    print(classification_report(all_labels, all_preds, target_names=genres_list, zero_division=0))
+    
+    # 2. Matriz de Confusión Pura
+    print("--- MATRIZ DE CONFUSIÓN ANALÍTICA ---")
+    print(confusion_matrix(all_labels, all_preds))
+    print("="*60 + "\n")
+
 def loop(train_dataloader, val_dataloader, model, loss_fn, optimizer, epochs):
   print("=" * 60)
   print("  Training InceptionV3 on GTZAN")
@@ -75,12 +111,19 @@ def loop(train_dataloader, val_dataloader, model, loss_fn, optimizer, epochs):
   for epoch in range(1, epochs + 1):
     print(f"\nEpoch {epoch}/{epochs}")
     print("-" * 60)
+
+    train_dataloader.dataset.reset_epoch_samples()
+
     epoch_start = time.perf_counter()
     train(train_dataloader, model, loss_fn, optimizer)
+
     validate(val_dataloader, model, loss_fn)
     epoch_time = time.perf_counter() - epoch_start
     print(f"  epoch {epoch} time: {format_duration(epoch_time)}")
-
+  
+  genres_list = train_dataloader.dataset.GENRES 
+  final_evaluation(val_dataloader, model, genres_list)
+  
   total_time = time.perf_counter() - total_start
   print("\n" + "=" * 60)
   print(f"  Done!  Total time: {format_duration(total_time)}")
@@ -107,9 +150,10 @@ def setup():
 
     model = InceptionV3().to(device)
     loss_fn = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.trainable_parameters(), lr=1e-4)
+    optimizer = torch.optim.AdamW(model.trainable_parameters(), lr=1e-5,weight_decay=0.01)
 
     loop(train_dataloader, val_dataloader, model, loss_fn, optimizer, epochs)
+
     
 if __name__ == "__main__":
   setup()
