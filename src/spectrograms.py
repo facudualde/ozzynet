@@ -4,7 +4,9 @@ import librosa
 import numpy as np
 from PIL import Image
 
+# Source: 1000 .wav files laid out as data/genres_original/<genre>/<song>.wav
 INPUT_DIR = "data/genres_original"
+# Sink:   spectrograms/<genre>/<song>/<chunk>.png (one PNG per 3-second chunk)
 OUTPUT_DIR = "spectrograms"
 WINDOW_LENGTH_MS = 3000
 # === NUEVA CONFIGURACIÓN DE OVERLAP ===
@@ -26,15 +28,31 @@ def generate_spectrogram(y: np.ndarray, sr: int, output_path: str) -> None:
   fig.savefig(output_path, dpi=DPI, pad_inches=0)
   plt.close(fig)
 
+  # Rescale from dB ([-TOP_DB, 0]) to uint8 ([0, 255]) so PIL can save it.
+  # The math: shift by +TOP_DB so values are in [0, TOP_DB], divide by
+  # TOP_DB to land in [0, 1], multiply by 255, clip and cast.
   mel_img = ((mel_db + TOP_DB) / TOP_DB * 255).clip(0, 255).astype(np.uint8)
+
+  # Invert so high-energy regions become bright (255) and silence becomes
+  # dark (0). This matches the convention ConvNet was trained against
+  # — inverting once now vs. inverting every time at training.
   mel_img = 255 - mel_img
 
+  # "L" mode = single-channel grayscale PNG. Small files, fast disk I/O.
   Image.fromarray(mel_img, mode="L").save(output_path)
 
+
 def process_song(wav_path: str, song_output_dir: str) -> tuple[str, str | None]:
+  # Load the whole song into memory at once (max ~30 s ≈ 660 k samples).
+  # sr=None preserves the file's native sample rate (22050 for GTZAN).
+  # mono=True mixes down to one channel — mono spectrograms are sufficient
+  # for genre classification and keep the network input 1-channel.
   try:
     y_full, sr = librosa.load(wav_path, sr=None, mono=True)
   except Exception as exc:
+    # GTZAN ships a few known-corrupt files (e.g. jazz.00054.wav) that fail
+    # to decode. Return (wav_path, None) so main() can skip the success log;
+    # the dataset class already tolerates missing songs.
     print(f"[WARN] failed to load {wav_path}: {exc}")
     return wav_path, None
 

@@ -27,13 +27,13 @@ class DatasetFT(TorchDataset):
 
     def __init__(
         self,
-        fine_tuning: bool = False,
         root: str = "spectrograms",
         split: str = "train",
         val_ratio: float = 0.2,
         seed: int = 42,
         t: transforms.Transform | None = None,
         return_song_id: bool = False,
+        fine_tuning: bool = False,
     ) -> None:
         assert split in ["train", "val"], "El parámetro 'split' debe ser 'train' o 'val'"
         
@@ -68,9 +68,16 @@ class DatasetFT(TorchDataset):
             # Para validación fijamos los 10 fragmentos usando una función interna
             self._set_static_validation_samples()
 
+        # Fresh RNG instance: ensures every call with the same `seed`
+        # starts from the same internal state, regardless of what
+        # happened elsewhere in the program.
         rng = random.Random(seed)
         samples: list[tuple[str, int]] = []
 
+        # Split per genre rather than globally: with alphabetized
+        # filenames, a global shuffle would put the first ~200 songs
+        # almost entirely in `blues`, leaving other genres
+        # over-represented in train and missing in val.
         for genre in self.GENRES:
             genre_dir = self.root / genre
             if not genre_dir.is_dir():
@@ -145,14 +152,19 @@ class DatasetFT(TorchDataset):
     def __len__(self) -> int:
         return len(self.samples)
 
-    def __getitem__(
-      self,
-      idx: int
-    ) -> tuple[torch.Tensor, int] | tuple[torch.Tensor, int, str]:
+    def __getitem__(self, idx: int):
+        # Look up this sample's chunk path and label from the precomputed list.
         img_path, label = self.samples[idx]
+
+        # Open the PNG. Use 3 channels (RGB) for InceptionV3, 1 channel
+        # (grayscale) for ConvNet. `convert("RGB")` on a grayscale image
+        # replicates the single channel across R, G, and B.
         if self.fine_tuning:
             image = Image.open(img_path).convert("RGB")
         else:
             image = Image.open(img_path).convert("L")
+
+        # Apply the transform pipeline built in __init__:
+        # resize + normalize (+ augment if train).
         image = self.t(image)
         return image, label
