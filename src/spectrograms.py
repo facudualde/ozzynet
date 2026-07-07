@@ -1,10 +1,8 @@
 import os
 from concurrent.futures import ProcessPoolExecutor
-
 import librosa
-import librosa.display
-import matplotlib.pyplot as plt
 import numpy as np
+from PIL import Image
 
 INPUT_DIR = "data/genres_original"
 OUTPUT_DIR = "spectrograms"
@@ -18,17 +16,27 @@ MAX_WORKERS = 4
 
 
 def generate_spectrogram(y: np.ndarray, sr: int, output_path: str) -> None:
-    # Usar escala Mel con 128 bancos de filtros
-    mel_spec = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128, fmax=sr/2)
-    mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
+  # Usar escala Mel con 128 bancos de filtros
+  mel_spec = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128, fmax=sr/2)
+  mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
+  fig, ax = plt.subplots(figsize=IMG_SIZE_INCHES, dpi=DPI)
+  librosa.display.specshow(mel_spec_db, sr=sr, x_axis=None, y_axis=None, ax=ax, fmax=sr/2)
+  ax.set_axis_off()
+  ax.set_aspect("auto")
+  fig.savefig(output_path, dpi=DPI, pad_inches=0)
+  plt.close(fig)
 
-    fig, ax = plt.subplots(figsize=IMG_SIZE_INCHES, dpi=DPI)
-    librosa.display.specshow(mel_spec_db, sr=sr, x_axis=None, y_axis=None, ax=ax, fmax=sr/2)
-    ax.set_axis_off()
-    ax.set_aspect("auto")
-    fig.savefig(output_path, dpi=DPI, pad_inches=0)
-    plt.close(fig)
+  mel_img = ((mel_db + TOP_DB) / TOP_DB * 255).clip(0, 255).astype(np.uint8)
+  mel_img = 255 - mel_img
 
+  Image.fromarray(mel_img, mode="L").save(output_path)
+
+def process_song(wav_path: str, song_output_dir: str) -> tuple[str, str | None]:
+  try:
+    y_full, sr = librosa.load(wav_path, sr=None, mono=True)
+  except Exception as exc:
+    print(f"[WARN] failed to load {wav_path}: {exc}")
+    return wav_path, None
 
 def process_song(wav_path: str, song_output_dir: str) -> tuple[str, str]:
     # 1. Cargar el audio original completo

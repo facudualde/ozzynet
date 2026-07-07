@@ -4,12 +4,13 @@ from pathlib import Path
 
 import torch
 from torchvision.transforms import v2 as transforms
+import torchaudio
 from PIL import Image
 from torch.utils.data import Dataset as TorchDataset
 from torchvision.models import Inception_V3_Weights
 
 
-class GTZANDataset(TorchDataset):
+class DatasetFT(TorchDataset):
     """Dataset GTZAN estructurado por canciones.
 
     Evita el Data Leakage utilizando espectrogramas de Mel estándar y soporta
@@ -22,14 +23,17 @@ class GTZANDataset(TorchDataset):
         "jazz", "metal", "pop", "reggae", "rock",
     ]
     GENRE_TO_IDX = {genre: idx for idx, genre in enumerate(GENRES)}
+    EXPECTED_CHUNKS = 10
 
     def __init__(
         self,
+        fine_tuning: bool = False,
         root: str = "spectrograms",
-        split: str = "train",  # Puede ser "train" o "val"
+        split: str = "train",
         val_ratio: float = 0.2,
         seed: int = 42,
         t: transforms.Transform | None = None,
+        return_song_id: bool = False,
     ) -> None:
         assert split in ["train", "val"], "El parámetro 'split' debe ser 'train' o 'val'"
         
@@ -64,9 +68,8 @@ class GTZANDataset(TorchDataset):
             # Para validación fijamos los 10 fragmentos usando una función interna
             self._set_static_validation_samples()
 
-    def _build_split_samples(self, val_ratio: float, seed: int) -> list[tuple[str, int]]:
-        samples: list[tuple[str, int]] = []
         rng = random.Random(seed)
+        samples: list[tuple[str, int]] = []
 
         for genre in self.GENRES:
             genre_dir = self.root / genre
@@ -87,11 +90,11 @@ class GTZANDataset(TorchDataset):
                     continue
                 if self.split == "train" and song_name in val_song_names:
                     continue
+                if self.split == "val" and song_name not in val_song_names:
+                    continue
 
                 song_dir = genre_dir / song_name
-                images = sorted(song_dir.glob("*.png"))
-                for img_path in images:
-                    samples.append((str(img_path), self.GENRE_TO_IDX[genre]))
+                chunk_paths = sorted(song_dir.glob("*.png"))
 
         print(f"Instanciado split '{self.split}': {len(samples)} imágenes totales en disco.")
         return samples
@@ -142,8 +145,14 @@ class GTZANDataset(TorchDataset):
     def __len__(self) -> int:
         return len(self.samples)
 
-    def __getitem__(self, idx: int) -> tuple[torch.Tensor, int]:
+    def __getitem__(
+      self,
+      idx: int
+    ) -> tuple[torch.Tensor, int] | tuple[torch.Tensor, int, str]:
         img_path, label = self.samples[idx]
-        image = Image.open(img_path).convert("RGB")
+        if self.fine_tuning:
+            image = Image.open(img_path).convert("RGB")
+        else:
+            image = Image.open(img_path).convert("L")
         image = self.t(image)
         return image, label
