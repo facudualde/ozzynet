@@ -1,12 +1,12 @@
 import os
 from concurrent.futures import ProcessPoolExecutor
-import librosa
-import numpy as np
-from PIL import Image
 
-# Source: 1000 .wav files laid out as data/genres_original/<genre>/<song>.wav
+import librosa
+import librosa.display
+import matplotlib.pyplot as plt
+import numpy as np
+
 INPUT_DIR = "data/genres_original"
-# Sink:   spectrograms/<genre>/<song>/<chunk>.png (one PNG per 3-second chunk)
 OUTPUT_DIR = "spectrograms"
 WINDOW_LENGTH_MS = 3000
 # === NUEVA CONFIGURACIÓN DE OVERLAP ===
@@ -42,19 +42,14 @@ def generate_spectrogram(y: np.ndarray, sr: int, output_path: str) -> None:
   Image.fromarray(mel_img, mode="L").save(output_path)
 
 
-def process_song(wav_path: str, song_output_dir: str) -> tuple[str, str | None]:
-  # Load the whole song into memory at once (max ~30 s ≈ 660 k samples).
-  # sr=None preserves the file's native sample rate (22050 for GTZAN).
-  # mono=True mixes down to one channel — mono spectrograms are sufficient
-  # for genre classification and keep the network input 1-channel.
-  try:
-    y_full, sr = librosa.load(wav_path, sr=None, mono=True)
-  except Exception as exc:
-    # GTZAN ships a few known-corrupt files (e.g. jazz.00054.wav) that fail
-    # to decode. Return (wav_path, None) so main() can skip the success log;
-    # the dataset class already tolerates missing songs.
-    print(f"[WARN] failed to load {wav_path}: {exc}")
-    return wav_path, None
+def process_song(wav_path: str, song_output_dir: str) -> tuple[str, str]:
+    # 1. Cargar el audio original completo
+    y_full, sr = librosa.load(wav_path, sr=None)
+    sr = int(sr)
+    
+    # 2. Calcular tamaños en número de muestras (samples)
+    samples_per_window = int(WINDOW_LENGTH_MS / 1000 * sr)
+    samples_per_hop = int(HOP_LENGTH_MS / 1000 * sr)
 
 def process_song(wav_path: str, song_output_dir: str) -> tuple[str, str]:
     # 1. Cargar el audio original completo

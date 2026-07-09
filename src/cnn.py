@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torchvision import models
 from torchvision.models import Inception_V3_Weights
 
@@ -62,68 +61,82 @@ class InceptionV3(nn.Module):
         print(f"Frozen:    {total - trainable:>12,}")
 
 class ConvNet(nn.Module):
-  """VGG-13 style plain CNN for mel-spectrogram genre classification.
+    """
+    CNN clásica para clasificación de espectrogramas.
+    Estructura simplificada alineada con los conceptos del curso.
+    """
+    NUM_GENRES = 10
 
-  Sequential Conv-BN-ReLU blocks.
-  """
+    def __init__(self, num_classes: int = NUM_GENRES, dropout_rate: float = 0.3) -> None:
+        super().__init__()
 
-  NUM_GENRES = 10
+        # --- EXTRACTOR DE CARACTERÍSTICAS (Capas Convolucionales) ---
+        # Bloque 1: Entrada (1 canal, ej. gris) -> 32 filtros
+        self.conv1 = nn.Conv2d(in_channels=1, out_channels=32, kernel_size=3, padding=1)
+        self.relu1 = nn.ReLU()
+        self.pool1 = nn.MaxPool2d(kernel_size=2, stride=2)
 
-  def __init__(
-    self,
-    num_classes: int = NUM_GENRES,
-    dropout: float = 0.5,
-    spatial_dropout: float = 0.1,
-  ) -> None:
-    super().__init__()
+        # Bloque 2: 32 filtros -> 64 filtros
+        self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=3, padding=1)
+        self.relu2 = nn.ReLU()
+        self.pool2 = nn.MaxPool2d(kernel_size=2, stride=2)
 
-    self.block1 = self._make_block(1,   32,  spatial_dropout)
-    self.block2 = self._make_block(32,  64,  spatial_dropout)
-    self.block3 = self._make_block(64,  128, spatial_dropout)
-    self.block4 = self._make_block(128, 256, spatial_dropout)
-    self.block5 = self._make_block(256, 256, spatial_dropout)
+        # Bloque 3: 64 filtros -> 128 filtros
+        self.conv3 = nn.Conv2d(in_channels=64, out_channels=128, kernel_size=3, padding=1)
+        self.relu3 = nn.ReLU()
+        self.pool3 = nn.MaxPool2d(kernel_size=2, stride=2)
 
-    self.gap = nn.AdaptiveAvgPool2d(1)
-    self.dropout = nn.Dropout(dropout)
-    self.fc = nn.Linear(256, num_classes)
+        # Bloque 4: 128 filtros -> 256 filtros
+        self.conv4 = nn.Conv2d(in_channels=128, out_channels=256, kernel_size=3, padding=1)
+        self.relu4 = nn.ReLU()
+        self.pool4 = nn.MaxPool2d(kernel_size=2, stride=2)
 
-    self._init_weights()
+        # --- CLASIFICADOR (Capas Densas / Totalmente Conectadas) ---
+        # El Flatten tradicional de PyTorch se define aquí o directamente en el forward
+        self.flatten = nn.Flatten()
 
-  def _make_block(self, in_c: int, out_c: int, spatial_dropout: float) -> nn.Sequential:
-    return nn.Sequential(
-      nn.Conv2d(in_c, out_c, kernel_size=3, padding=1, bias=False),
-      nn.BatchNorm2d(out_c),
-      nn.ReLU(inplace=True),
-      nn.Conv2d(out_c, out_c, kernel_size=3, padding=1, bias=False),
-      nn.BatchNorm2d(out_c),
-      nn.ReLU(inplace=True),
-      nn.MaxPool2d(kernel_size=2, stride=2),
-      nn.Dropout2d(spatial_dropout) if spatial_dropout > 0 else nn.Identity(),
-    )
+        # Nota: El tamaño de entrada '256 * 8 * 8' asume que tu espectrograma 
+        # se reduce a ese tamaño tras los 4 MaxPool. Si cambias el tamaño de la imagen,
+        # este número cambia (tal como pasa con el Flatten de Keras).
+        self.fc1 = nn.Linear(256 * 8 * 8, 128)
+        self.relu_fc = nn.ReLU()
+        self.dropout = nn.Dropout(p=dropout_rate) # Dropout estándar del curso
+        
+        # Capa de salida: 128 neuronas -> 10 clases (géneros)
+        self.fc2 = nn.Linear(128, num_classes)
 
-  def _init_weights(self) -> None:
-    for m in self.modules():
-      if isinstance(m, nn.Conv2d):
-        nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="relu")
-      elif isinstance(m, nn.BatchNorm2d):
-        nn.init.constant_(m.weight, 1.0)
-        nn.init.constant_(m.bias, 0.0)
-      elif isinstance(m, nn.Linear):
-        nn.init.normal_(m.weight, 0.0, 0.01)
-        nn.init.constant_(m.bias, 0.0)
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Bloque 1
+        x = self.conv1(x)
+        x = self.relu1(x)
+        x = self.pool1(x)
 
-  def forward(self, x: torch.Tensor) -> torch.Tensor:
-    x = self.block1(x)
-    x = self.block2(x)
-    x = self.block3(x)
-    x = self.block4(x)
-    x = self.block5(x)
-    x = self.gap(x).flatten(1)
-    x = self.dropout(x)
-    return self.fc(x)
+        # Bloque 2
+        x = self.conv2(x)
+        x = self.relu2(x)
+        x = self.pool2(x)
 
-  def parameter_summary(self) -> None:
-    total = sum(p.numel() for p in self.parameters())
-    trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
-    print(f"Total:     {total:>12,}")
-    print(f"Trainable: {trainable:>12,}")
+        # Bloque 3
+        x = self.conv3(x)
+        x = self.relu3(x)
+        x = self.pool3(x)
+
+        # Bloque 4
+        x = self.conv4(x)
+        x = self.relu4(x)
+        x = self.pool4(x)
+
+        # Clasificador
+        x = self.flatten(x)
+        x = self.fc1(x)
+        x = self.relu_fc(x)
+        x = self.dropout(x)
+        
+        # En PyTorch devolvemos los "logits" directos. 
+        # La función de pérdida (CrossEntropyLoss) ya aplica el Softmax internamente.
+        return self.fc2(x)
+    def parameter_summary(self) -> None:
+      total = sum(p.numel() for p in self.parameters())
+      trainable = sum(p.numel() for p in self.parameters() if p.requires_grad)
+      print(f"Total:     {total:>12,}")
+      print(f"Trainable: {trainable:>12,}")

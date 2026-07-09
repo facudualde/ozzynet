@@ -121,7 +121,7 @@ def loop(
   batch_size: int,
 ) -> None:
   print("=" * 60)
-  print("  Training ConvNet (ResNet-14) on GTZAN (3-sec chunks)")
+  print("  Training ConvNet on GTZAN (3-sec chunks)")
   print(f"  Device:  {DEVICE}")
   print(f"  Epochs:  {epochs}")
   print(f"  Batch:   {batch_size}")

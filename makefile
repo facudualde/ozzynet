@@ -51,6 +51,10 @@ health:
 spectrograms:
 	docker compose exec pytorch python3 src/spectrograms.py
 
+.PHONY: spectrograms_one_channel
+spectrograms_one_channel:
+	docker compose exec pytorch python3 src/spectrograms_one_channel.py
+
 BATCH_SIZE ?= 32
 EPOCHS     ?= 50
 fine_tuning:
@@ -58,3 +62,8 @@ fine_tuning:
 
 train:
 	docker compose exec pytorch python3 src/train.py $(BATCH_SIZE) $(EPOCHS)
+
+CHECKPOINT ?=
+
+eval:
+	docker compose exec pytorch python3 src/eval.py $(CHECKPOINT)
