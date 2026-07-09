@@ -13,7 +13,8 @@ class GTZANDataset(TorchDataset):
     """Dataset GTZAN estructurado por canciones.
 
     Evita el Data Leakage utilizando espectrogramas de Mel estándar y soporta
-    submuestreo dinámico de 10 fragmentos por canción por época.
+    submuestreo dinámico de 10 fragmentos por canción por época, tanto para
+    entrenamiento como de manera estática para validación.
     """
 
     GENRES = [
@@ -45,6 +46,7 @@ class GTZANDataset(TorchDataset):
         self.root = Path(root)
         self.t: transforms.Transform = t
         self.split = split
+        self.seed = seed  # Guardamos la semilla
 
         # 1. Construir la lista maestra con todas las muestras asignadas a este split
         self.all_samples = self._build_split_samples(val_ratio, seed)
@@ -55,9 +57,12 @@ class GTZANDataset(TorchDataset):
         # 2. Inicializar la lista activa que usará __getitem__
         self.samples = list(self.all_samples)
         
-        # 3. Si es el conjunto de entrenamiento, ejecutamos el primer filtro aleatorio de 10 fragmentos
+        # 3. Filtrar a 10 fragmentos por canción dependiendo del split
         if self.split == "train":
             self.reset_epoch_samples()
+        elif self.split == "val":
+            # Para validación fijamos los 10 fragmentos usando una función interna
+            self._set_static_validation_samples()
 
     def _build_split_samples(self, val_ratio: float, seed: int) -> list[tuple[str, int]]:
         samples: list[tuple[str, int]] = []
@@ -91,11 +96,30 @@ class GTZANDataset(TorchDataset):
         print(f"Instanciado split '{self.split}': {len(samples)} imágenes totales en disco.")
         return samples
 
+    def _set_static_validation_samples(self) -> None:
+        """Selecciona 10 fragmentos fijos por canción para el split de validación."""
+        sampled_list = []
+        songs_dict = defaultdict(list)
+        
+        # Usamos una semilla fija local para asegurar reproducibilidad absoluta en validación
+        rng = random.Random(self.seed)
+        
+        for sample in self.all_samples: 
+            song_name = Path(sample[0]).parent.name
+            songs_dict[song_name].append(sample)
+            
+        for song_name, samples_list in songs_dict.items():
+            k = min(10, len(samples_list))
+            # Usamos el objeto rng local para el sampling determinista
+            sampled_list.extend(rng.sample(samples_list, k))
+            
+        self.samples = sampled_list
+        print(f"[Dataset] Muestras fijadas de forma estática para Validación: {len(self.samples)}")
+
     def reset_epoch_samples(self) -> None:
-        """Selecciona aleatoriamente 10 fragmentos de cada canción para la época actual."""
+        """Selecciona aleatoriamente 10 fragmentos de cada canción para la época actual (solo train)."""
         if self.split == "val":
-            # En validación no queremos aleatoriedad, evaluamos siempre sobre el conjunto completo
-            self.samples = list(self.all_samples)
+            # Protegemos el split de validación para que no cambie dinámicamente si es llamado por error
             return 
 
         sampled_list = []
@@ -120,8 +144,6 @@ class GTZANDataset(TorchDataset):
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, int]:
         img_path, label = self.samples[idx]
-        # Al usar .convert("RGB"), cargamos el espectrograma de Mel monocromático
-        # duplicando su información en los tres canales, manteniendo feliz a InceptionV3.
         image = Image.open(img_path).convert("RGB")
         image = self.t(image)
         return image, label

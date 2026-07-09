@@ -4,3 +4,4 @@ matplotlib
 numpy
 kagglehub==0.3.13
 torchvision
+scikit-learn
