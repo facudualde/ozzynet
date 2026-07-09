@@ -25,7 +25,7 @@ GTZAN with this architecture (typically 75–80 %).
 
 ### 1. ImageNet normalization on spectrogram data (largest single issue)
 
-`GTZANDataset` used to default to:
+`DatasetFT` used to default to:
 
 ```python
 mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
@@ -101,31 +101,31 @@ Expected gain: **+2–5 accuracy points**.
 
 ## Summary table
 
-| Fix | Where | Gain |
-|---|---|---|
-| Dataset-specific normalization | `dataset.py` + `data/norm_stats.json` | +1–3 |
-| LR `1e-3` → `1e-4` | `fine_tuning.py` | +0–2 |
-| LR scheduler | `fine_tuning.py` | +2–5 |
-| Label smoothing `0.1` | `fine_tuning.py` | +0.5–1 |
-| EMA at validation | `fine_tuning.py` | +1–2 |
-| Mixed precision | `fine_tuning.py` | 1.5–2× speed |
-| Unfreeze last block | `cnn.py` + `fine_tuning.py` | +2–5 |
-| **Approximate total** | | **+10–20** |
+| Fix                            | Where                                 | Gain         |
+| ------------------------------ | ------------------------------------- | ------------ |
+| Dataset-specific normalization | `dataset.py` + `data/norm_stats.json` | +1–3         |
+| LR `1e-3` → `1e-4`             | `fine_tuning.py`                      | +0–2         |
+| LR scheduler                   | `fine_tuning.py`                      | +2–5         |
+| Label smoothing `0.1`          | `fine_tuning.py`                      | +0.5–1       |
+| EMA at validation              | `fine_tuning.py`                      | +1–2         |
+| Mixed precision                | `fine_tuning.py`                      | 1.5–2× speed |
+| Unfreeze last block            | `cnn.py` + `fine_tuning.py`           | +2–5         |
+| **Approximate total**          |                                       | **+10–20**   |
 
 Reaching **75–80 %** validation accuracy is a plausible outcome once
 all of these land.
 
 ## What is NOT the cause (worth ruling out)
 
-| Suspect | Why it's fine |
-|---|---|
+| Suspect                               | Why it's fine                                                                              |
+| ------------------------------------- | ------------------------------------------------------------------------------------------ |
 | Frozen backbone being too restrictive | The freeze itself is reasonable; it's the duration + missing unfreeze later that costs you |
-| Batch size 32 | Appropriate for the dataset and GPU memory |
-| Number of epochs (50) | Plenty; the LR scheduler would actually use these |
-| Validation set size | 2 000 samples × 10 classes is well-balanced; val_acc is stable |
-| Class imbalance | GTZAN is perfectly balanced |
-| Data leakage | `random_split` is correct |
-| Bug in the model | `InceptionV3.forward` returns a clean `[B, 10]` tensor; no leaking aux output |
+| Batch size 32                         | Appropriate for the dataset and GPU memory                                                 |
+| Number of epochs (50)                 | Plenty; the LR scheduler would actually use these                                          |
+| Validation set size                   | 2 000 samples × 10 classes is well-balanced; val_acc is stable                             |
+| Class imbalance                       | GTZAN is perfectly balanced                                                                |
+| Data leakage                          | `random_split` is correct                                                                  |
+| Bug in the model                      | `InceptionV3.forward` returns a clean `[B, 10]` tensor; no leaking aux output              |
 
 ## How to read the new training output
 

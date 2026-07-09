@@ -21,7 +21,7 @@ from confusion_matrix import (
     compute_confusion_matrix_songs,
     print_confusion_matrix_report,
 )
-from dataset import GTZANDataset
+from dataset_cnn import DatasetCNN
 
 
 def load_model(checkpoint_path: str, device) -> ConvNet:
@@ -65,17 +65,17 @@ def main():
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = load_model(args.checkpoint, device)
-    genres = GTZANDataset.GENRES
+    genres = DatasetCNN.GENRES
 
     if args.mode in ("song", "both"):
-        val_ds = GTZANDataset(split="val", return_song_id=True)
+        val_ds = DatasetCNN(split="val", return_song_id=True)
         cm = compute_confusion_matrix_songs(model, val_ds, args.batch_size, device)
         print_confusion_matrix_report(
             cm, genres, title="Song-level (soft voting)",
         )
 
     if args.mode in ("chunk", "both"):
-        val_ds = GTZANDataset(split="val")
+        val_ds = DatasetCNN(split="val")
         loader = DataLoader(
             val_ds, batch_size=args.batch_size, shuffle=False, num_workers=0,
         )

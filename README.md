@@ -40,27 +40,27 @@ BATCH_SIZE=64 EPOCHS=20 make fine_tuning   # override defaults
 ROCm 6.0+ dropped several consumer RDNA cards. Set this in `.env` to the
 matching value:
 
-| GPU family | Models | GFX version |
-|---|---|---|
-| RDNA 1 | RX 5700 / 5700 XT | `10.1.0` |
-| RDNA 2 (Navi 21-24) | RX 6600 / 6700 XT / 6800 / 6900 XT | `10.3.0` |
-| RDNA 2 (Navi 31-33) | RX 7900 XT / 7900 XTX | `11.0.0` |
-| RDNA 3 | RX 7600 / 7700 XT / 7800 XT / 7900 XT | `11.0.0` |
-| Vega | RX Vega 56 / 64, Vega VII | `9.0.0` |
+| GPU family          | Models                                | GFX version |
+| ------------------- | ------------------------------------- | ----------- |
+| RDNA 1              | RX 5700 / 5700 XT                     | `10.1.0`    |
+| RDNA 2 (Navi 21-24) | RX 6600 / 6700 XT / 6800 / 6900 XT    | `10.3.0`    |
+| RDNA 2 (Navi 31-33) | RX 7900 XT / 7900 XTX                 | `11.0.0`    |
+| RDNA 3              | RX 7600 / 7700 XT / 7800 XT / 7900 XT | `11.0.0`    |
+| Vega                | RX Vega 56 / 64, Vega VII             | `9.0.0`     |
 
 ## Makefile targets
 
-| Target | What it does |
-|---|---|
-| `make setup` | Writes `.env` from host uid/gid/groups; chmods entrypoint. |
-| `make sync` | Creates `.venv/`, installs `requirements.txt` deps, adds a CPU-only `torch` wheel for the editor. **Editor only — never run the project from the venv.** |
-| `make up` | Builds and starts the ROCm container. |
-| `make down` | Stops and removes the container. |
-| `make shell` | Opens a bash session inside the container. |
-| `make health` | Runs `src/health.py` (GPU detect + CPU/GPU matmul benchmark). |
-| `make spectrograms` | Runs `src/spectrograms.py` to generate the spectrogram dataset from `data/genres_original/`. See `docs/dataset.md` for how it works. |
-| `make fine_tuning` | Runs `src/fine_tuning.py` to fine-tune Inception v3 on the spectrogram dataset. Saves a timestamped checkpoint to `checkpoints/YYYYMMDD_HHMMSS/`. Override defaults with `BATCH_SIZE=N EPOCHS=N make fine_tuning`. |
-| `make clean` | Stops the container; removes `.env`, `.venv/`, and Python bytecode caches. |
+| Target              | What it does                                                                                                                                                                                                       |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `make setup`        | Writes `.env` from host uid/gid/groups; chmods entrypoint.                                                                                                                                                         |
+| `make sync`         | Creates `.venv/`, installs `requirements.txt` deps, adds a CPU-only `torch` wheel for the editor. **Editor only — never run the project from the venv.**                                                           |
+| `make up`           | Builds and starts the ROCm container.                                                                                                                                                                              |
+| `make down`         | Stops and removes the container.                                                                                                                                                                                   |
+| `make shell`        | Opens a bash session inside the container.                                                                                                                                                                         |
+| `make health`       | Runs `src/health.py` (GPU detect + CPU/GPU matmul benchmark).                                                                                                                                                      |
+| `make spectrograms` | Runs `src/spectrograms.py` to generate the spectrogram dataset from `data/genres_original/`. See `docs/dataset.md` for how it works.                                                                               |
+| `make fine_tuning`  | Runs `src/fine_tuning.py` to fine-tune Inception v3 on the spectrogram dataset. Saves a timestamped checkpoint to `checkpoints/YYYYMMDD_HHMMSS/`. Override defaults with `BATCH_SIZE=N EPOCHS=N make fine_tuning`. |
+| `make clean`        | Stops the container; removes `.env`, `.venv/`, and Python bytecode caches.                                                                                                                                         |
 
 ## Project structure
 
@@ -74,7 +74,7 @@ matching value:
 ├── src/
 │   ├── health.py         # GPU detect + CPU/GPU matmul benchmark
 │   ├── spectrograms.py   # generates spectrograms/ from data/genres_original/
-│   ├── dataset.py        # GTZANDataset class with train/val splits (used by fine_tuning.py)
+│   ├── dataset.py        # DatasetFT class with train/val splits (used by fine_tuning.py)
 │   ├── cnn.py            # InceptionV3 wrapper for fine-tuning (frozen backbone, 10-class head)
 │   └── fine_tuning.py    # fine-tuning loop (train, validate, save checkpoint)
 ├── docs/                 # architectural notes (dataset.md, fine_tuning.md)

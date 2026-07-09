@@ -11,7 +11,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from cnn import ConvNet
-from dataset import GTZANDataset
+from dataset_cnn import DatasetCNN
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 SEED = 42
@@ -73,7 +73,7 @@ def validate_songs(
   batch_size: int,
 ) -> float:
   """Song-level accuracy via soft voting (mean of softmax probabilities)."""
-  song_ds = GTZANDataset(
+  song_ds = DatasetCNN(
     split="val",
     seed=SEED,
     return_song_id=True,
@@ -197,8 +197,8 @@ def main() -> None:
 
   set_seed(SEED)
 
-  train_ds = GTZANDataset(split="train", seed=SEED)
-  val_ds = GTZANDataset(split="val", seed=SEED)
+  train_ds = DatasetCNN(split="train", seed=SEED)
+  val_ds = DatasetCNN(split="val", seed=SEED)
 
   train_loader = DataLoader(
     train_ds,

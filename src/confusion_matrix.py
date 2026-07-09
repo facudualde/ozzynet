@@ -60,7 +60,7 @@ def print_confusion_matrix_report(cm, class_names, title=""):
       Output of `compute_confusion_matrix` or
       `compute_confusion_matrix_songs`.
   class_names : list[str]
-      Names for the rows and columns (e.g. GTZANDataset.GENRES).
+      Names for the rows and columns (e.g. DatasetFT.GENRES).
   title : str, optional
       Header shown at the top of the report.
 

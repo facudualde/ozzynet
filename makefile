@@ -64,6 +64,5 @@ train:
 	docker compose exec pytorch python3 src/train.py $(BATCH_SIZE) $(EPOCHS)
 
 CHECKPOINT ?=
-
 eval:
 	docker compose exec pytorch python3 src/eval.py $(CHECKPOINT)
