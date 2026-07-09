@@ -55,7 +55,8 @@ BATCH_SIZE ?= 64
 EPOCHS     ?= 30
 fine_tuning:
 	docker compose exec pytorch python3 src/fine_tuning.py $(BATCH_SIZE) $(EPOCHS)
-
+train_scratch:
+	docker compose exec pytorch python3 src/train_scratch.py $(BATCH_SIZE) $(EPOCHS)
 # TODO
 # train:
 	# docker compose exec pytorch python3 src/train.py
