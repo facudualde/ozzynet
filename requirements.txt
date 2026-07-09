@@ -5,3 +5,6 @@ numpy
 kagglehub==0.3.13
 torchvision
 scikit-learn
+torchsummary
+torchaudio
+scikit-learn

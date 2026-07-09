@@ -6,7 +6,7 @@ import torch
 from torch import nn
 from torch.utils.data import DataLoader
 from cnn import InceptionV3
-from dataset import GTZANDataset
+from dataset_fine_tuning import DatasetFT
 from sklearn.metrics import classification_report, confusion_matrix
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -142,8 +142,8 @@ def setup():
     epochs = int(sys.argv[2])
 
     # Instanciación nativa e independiente de cada conjunto
-    train_ds = GTZANDataset(split="train")
-    val_ds   = GTZANDataset(split="val")
+    train_ds = DatasetFT(split="train")
+    val_ds   = DatasetFT(split="val")
 
     train_dataloader = DataLoader(train_ds, batch_size=batch_size, shuffle=True) # IMPORTANTE: pon shuffle=True aquí
     val_dataloader   = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
