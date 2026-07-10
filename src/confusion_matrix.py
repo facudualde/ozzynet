@@ -1,5 +1,6 @@
 from collections import defaultdict
 
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -138,3 +139,33 @@ def print_confusion_matrix_report(cm, class_names, title=""):
       )
 
   print(bar)
+
+
+def plot_confusion_matrix(cm, class_names, save_path, title=""):
+  cm_arr = np.asarray(cm)
+  cm_norm = cm_arr.astype("float") / cm_arr.sum(axis=1)[:, np.newaxis]
+  fig, ax = plt.subplots(figsize=(8, 7))
+  im = ax.imshow(cm_norm, interpolation="nearest", cmap=plt.cm.Blues)
+  ax.figure.colorbar(im, ax=ax)
+  ax.set(
+    xticks=np.arange(len(class_names)),
+    yticks=np.arange(len(class_names)),
+    xticklabels=class_names,
+    yticklabels=class_names,
+    ylabel="True label",
+    xlabel="Predicted label",
+    title=title or "Confusion matrix",
+  )
+  plt.setp(ax.get_xticklabels(), rotation=45, ha="right",
+           rotation_mode="anchor")
+  thresh = cm_norm.max() / 2.0
+  for i in range(cm_arr.shape[0]):
+    for j in range(cm_arr.shape[1]):
+      ax.text(
+        j, i, f"{int(cm_arr[i, j])}",
+        ha="center", va="center",
+        color="white" if cm_norm[i, j] > thresh else "black",
+      )
+  fig.tight_layout()
+  plt.savefig(save_path, dpi=120)
+  plt.close(fig)

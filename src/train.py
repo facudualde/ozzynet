@@ -6,11 +6,16 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
 
 from cnn import ConvNet
+from confusion_matrix import (
+  compute_confusion_matrix_songs,
+  plot_confusion_matrix,
+)
 from dataset_cnn import DatasetCNN
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -139,6 +144,13 @@ def loop(
   timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
   save_dir = Path("checkpoints") / timestamp
   save_dir.mkdir(parents=True, exist_ok=True)
+  history = {
+    "train_acc": [],
+    "val_chunk_acc": [],
+    "val_song_acc": [],
+    "train_loss": [],
+    "val_loss": [],
+  }
   best_song_acc = 0.0
   best_path: Path | None = None
 
@@ -168,6 +180,12 @@ def loop(
       f"  lr: {current_lr:.6f}  time: {format_duration(epoch_time)}"
     )
 
+    history["train_acc"].append(train_acc)
+    history["val_chunk_acc"].append(val_chunk_acc)
+    history["val_song_acc"].append(song_acc)
+    history["train_loss"].append(train_loss)
+    history["val_loss"].append(val_loss)
+
     if song_acc > best_song_acc:
       best_song_acc = song_acc
       best_path = save_dir / f"best_song_acc_{song_acc:.4f}.pth"
@@ -186,6 +204,61 @@ def loop(
   print(f"  Best song_acc: {best_song_acc:.4f}  ({best_path})")
   print(f"  Last checkpoint: {last_path}")
   print("=" * 60)
+
+  plot_history(history, save_dir)
+  plot_loss_history(history, save_dir)
+
+  if best_path is not None and best_path.exists():
+    print(f"  Cargando best checkpoint: {best_path.name}")
+    best_model = ConvNet().to(DEVICE)
+    best_model.load_state_dict(torch.load(best_path, map_location=DEVICE))
+    val_ds_cm = DatasetCNN(split="val", seed=SEED, return_song_id=True)
+    cm = compute_confusion_matrix_songs(
+      best_model, val_ds_cm, batch_size, DEVICE,
+    )
+    plot_confusion_matrix(
+      cm, DatasetCNN.GENRES, save_dir / "confusion_matrix.png",
+      title="Song-level (soft voting)",
+    )
+    print(
+      f"  >> Plot de matriz de confusión guardado en: "
+      f"{save_dir / 'confusion_matrix.png'}"
+    )
+
+
+def plot_history(history, save_dir):
+  epochs = range(1, len(history["train_acc"]) + 1)
+  plt.figure(figsize=(8, 5))
+  plt.plot(epochs, history["train_acc"], label="Train acc", marker="o")
+  plt.plot(epochs, history["val_chunk_acc"], label="Val acc (chunk)", marker="o")
+  plt.plot(epochs, history["val_song_acc"], label="Val acc (song)", marker="o")
+  plt.xlabel("Época")
+  plt.ylabel("Accuracy")
+  plt.title("Curvas de accuracy - ConvNet GTZAN")
+  plt.legend()
+  plt.grid(alpha=0.3)
+  plt.tight_layout()
+  out = save_dir / "training_curves.png"
+  plt.savefig(out, dpi=120)
+  plt.close()
+  print(f"  >> Plot guardado en: {out}")
+
+
+def plot_loss_history(history, save_dir):
+  epochs = range(1, len(history["train_loss"]) + 1)
+  plt.figure(figsize=(8, 5))
+  plt.plot(epochs, history["train_loss"], label="Train loss", marker="o")
+  plt.plot(epochs, history["val_loss"], label="Val loss", marker="o")
+  plt.xlabel("Época")
+  plt.ylabel("Loss")
+  plt.title("Curvas de loss - ConvNet GTZAN")
+  plt.legend()
+  plt.grid(alpha=0.3)
+  plt.tight_layout()
+  out = save_dir / "training_curves_loss.png"
+  plt.savefig(out, dpi=120)
+  plt.close()
+  print(f"  >> Plot guardado en: {out}")
 
 
 def main() -> None:
