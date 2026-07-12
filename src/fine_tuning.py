@@ -2,11 +2,14 @@ import os
 import sys
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
+from collections import defaultdict
+import numpy as np
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
 from cnn import InceptionV3
-from dataset_fine_tuning import DatasetFT
+from dataset_fine_tuning import GTZANDataset as DatasetFT
 from sklearn.metrics import classification_report, confusion_matrix
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -20,8 +23,8 @@ def train(dataloader, model, loss_fn, optimizer):
     correct = 0  # <--- Agregamos contador de aciertos
     total = 0    # <--- Agregamos contador de muestras totales
     
-    for batch, (X, y) in enumerate(dataloader):
-        X, y = X.to(device), y.to(device)
+    for batch, batch_data in enumerate(dataloader):
+        X, y = batch_data[0].to(device), batch_data[1].to(device)
         
         # Forward pass
         pred = model(X)
@@ -48,21 +51,54 @@ def train(dataloader, model, loss_fn, optimizer):
     print(f"Train Error: \n Accuracy: {train_accuracy:.1f}%, Avg loss: {avg_loss:.4f}")
 
 def validate(val_dataloader, model, loss_fn):
-  size = len(val_dataloader.dataset)
+  #size = len(val_dataloader.dataset)
+  
   num_batches = len(val_dataloader)
+
   model.eval()
-  test_loss, correct = 0, 0
+  
+  #test_loss, correct = 0, 0
+  test_loss = 0
+  song_probs = defaultdict(list)
+  song_targets = {}
   with torch.no_grad():
-    for X, y in val_dataloader:
-      X, y = X.to(device), y.to(device)
-      pred = model(X)
-      test_loss += loss_fn(pred, y).item()
-      correct += (pred.argmax(1) == y).type(torch.float).sum().item()
+    for batch_data in val_dataloader:
+            X, y = batch_data[0].to(device), batch_data[1].to(device)
+            paths = batch_data[2] # Tercer parámetro devuelto por el DatasetFT
+
+            pred = model(X)
+            test_loss += loss_fn(pred, y).item()
+            probs = torch.softmax(pred, dim=1).cpu().numpy()
+            y_cpu = y.cpu().numpy()
+            #correct += (pred.argmax(1) == y).type(torch.float).sum().item()
+            for i in range(len(paths)):
+                # Extraemos el identificador único (ej: 'blues.00012') asumiendo 
+                # que están estructurados dentro de una carpeta por canción
+                song_id = Path(paths[i]).parent.name
+                
+                song_probs[song_id].append(probs[i])
+                song_targets[song_id] = y_cpu[i]
+  
   test_loss /= num_batches
-  correct /= size
+ # correct /= size
+ 
+  correct_songs = 0
+  total_songs = len(song_probs)
+  
+  for song_id, probs_list in song_probs.items():
+      # Soft voting: promediamos las probabilidades de los 10 espectrogramas
+      mean_probs = np.mean(probs_list, axis=0)
+      final_pred = np.argmax(mean_probs)
+      
+      if final_pred == song_targets[song_id]:
+          correct_songs += 1
+          
+  voting_accuracy = (correct_songs / total_songs) * 100
+  
   print(
-    f"Validation Error: \n" 
-    f"Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f} \n"
+      f"Validation Error (VOTING): \n" 
+      f" Accuracy: {voting_accuracy:.1f}% ({correct_songs}/{total_songs} canciones)\n"
+      f" Avg loss (per segment): {test_loss:.6f}\n"
   )
 
 def final_evaluation(dataloader, model, genres_list):
@@ -75,9 +111,22 @@ def final_evaluation(dataloader, model, genres_list):
     print("="*60)
     
     model.eval()
-    all_preds = []
-    all_labels = []
-    
+    song_probs = defaultdict(list)
+    song_targets = {}
+    with torch.no_grad():
+        for batch_data in dataloader:
+            X, y = batch_data[0].to(device), batch_data[1].to(device)
+            paths = batch_data[2]
+            
+            pred = model(X)
+            probs = torch.softmax(pred, dim=1).cpu().numpy()
+            y_cpu = y.cpu().numpy()
+            
+            for i in range(len(paths)):
+                song_id = Path(paths[i]).parent.name
+                song_probs[song_id].append(probs[i])
+                song_targets[song_id] = y_cpu[i]
+    '''
     with torch.no_grad():
         for X, y in dataloader:
             X = X.to(device)
@@ -86,6 +135,16 @@ def final_evaluation(dataloader, model, genres_list):
             # Guardamos las predicciones y las etiquetas reales
             all_preds.extend(pred.argmax(1).cpu().numpy())
             all_labels.extend(y.numpy())
+    '''
+
+
+    all_preds = []
+    all_labels = []
+    for song_id, probs_list in song_probs.items():
+        mean_probs = np.mean(probs_list, axis=0)
+        all_preds.append(np.argmax(mean_probs))
+        all_labels.append(song_targets[song_id])
+
             
     # 1. Reporte de Clasificación (Precisión, Recall, F1-Score)
     print("\n--- REPORTE DE CLASIFICACIÓN POR GÉNERO ---")
@@ -98,7 +157,7 @@ def final_evaluation(dataloader, model, genres_list):
 
 def loop(train_dataloader, val_dataloader, model, loss_fn, optimizer, epochs):
   print("=" * 60)
-  print("  Training InceptionV3 on GTZAN")
+  print("  Training InceptionV3 on GTZAN with Voting Validation")
   print(f"  Device:  {device}")
   print(f"  Epochs:  {epochs}")
   print(f"  Batch:   {train_dataloader.batch_size}")

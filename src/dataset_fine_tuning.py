@@ -4,13 +4,12 @@ from pathlib import Path
 
 import torch
 from torchvision.transforms import v2 as transforms
-import torchaudio
 from PIL import Image
 from torch.utils.data import Dataset as TorchDataset
 from torchvision.models import Inception_V3_Weights
 
 
-class DatasetFT(TorchDataset):
+class GTZANDataset(TorchDataset):
     """Dataset GTZAN estructurado por canciones.
 
     Evita el Data Leakage utilizando espectrogramas de Mel estándar y soporta
@@ -23,17 +22,14 @@ class DatasetFT(TorchDataset):
         "jazz", "metal", "pop", "reggae", "rock",
     ]
     GENRE_TO_IDX = {genre: idx for idx, genre in enumerate(GENRES)}
-    EXPECTED_CHUNKS = 10
 
     def __init__(
         self,
         root: str = "spectrograms",
-        split: str = "train",
+        split: str = "train",  # Puede ser "train" o "val"
         val_ratio: float = 0.2,
         seed: int = 42,
         t: transforms.Transform | None = None,
-        return_song_id: bool = False,
-        fine_tuning: bool = False,
     ) -> None:
         assert split in ["train", "val"], "El parámetro 'split' debe ser 'train' o 'val'"
         
@@ -68,16 +64,10 @@ class DatasetFT(TorchDataset):
             # Para validación fijamos los 10 fragmentos usando una función interna
             self._set_static_validation_samples()
 
-        # Fresh RNG instance: ensures every call with the same `seed`
-        # starts from the same internal state, regardless of what
-        # happened elsewhere in the program.
-        rng = random.Random(seed)
+    def _build_split_samples(self, val_ratio: float, seed: int) -> list[tuple[str, int]]:
         samples: list[tuple[str, int]] = []
+        rng = random.Random(seed)
 
-        # Split per genre rather than globally: with alphabetized
-        # filenames, a global shuffle would put the first ~200 songs
-        # almost entirely in `blues`, leaving other genres
-        # over-represented in train and missing in val.
         for genre in self.GENRES:
             genre_dir = self.root / genre
             if not genre_dir.is_dir():
@@ -97,11 +87,11 @@ class DatasetFT(TorchDataset):
                     continue
                 if self.split == "train" and song_name in val_song_names:
                     continue
-                if self.split == "val" and song_name not in val_song_names:
-                    continue
 
                 song_dir = genre_dir / song_name
-                chunk_paths = sorted(song_dir.glob("*.png"))
+                images = sorted(song_dir.glob("*.png"))
+                for img_path in images:
+                    samples.append((str(img_path), self.GENRE_TO_IDX[genre]))
 
         print(f"Instanciado split '{self.split}': {len(samples)} imágenes totales en disco.")
         return samples
@@ -153,18 +143,14 @@ class DatasetFT(TorchDataset):
         return len(self.samples)
 
     def __getitem__(self, idx: int):
-        # Look up this sample's chunk path and label from the precomputed list.
         img_path, label = self.samples[idx]
 
-        # Open the PNG. Use 3 channels (RGB) for InceptionV3, 1 channel
-        # (grayscale) for ConvNet. `convert("RGB")` on a grayscale image
-        # replicates the single channel across R, G, and B.
-        if self.fine_tuning:
-            image = Image.open(img_path).convert("RGB")
-        else:
-            image = Image.open(img_path).convert("L")
 
-        # Apply the transform pipeline built in __init__:
-        # resize + normalize (+ augment if train).
+        image = Image.open(img_path).convert("RGB")
+
+
         image = self.t(image)
-        return image, label
+        
+        # MODIFICACIÓN CLAVE: Retornamos también el path del archivo para poder trackear
+        # a qué canción pertenece este espectrograma específico en la votación.
+        return image, label, img_path
