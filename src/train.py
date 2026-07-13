@@ -16,7 +16,7 @@ from confusion_matrix import (
   compute_confusion_matrix_songs,
   plot_confusion_matrix,
 )
-from dataset_cnn import DatasetCNN
+from dataset import Gtzan
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 SEED = 42
@@ -78,10 +78,10 @@ def validate_songs(
   batch_size: int,
 ) -> float:
   """Song-level accuracy via soft voting (mean of softmax probabilities)."""
-  song_ds = DatasetCNN(
+  song_ds = Gtzan(
     split="val",
     seed=SEED,
-    return_song_id=True,
+    model="cnn",
   )
 
   def collate(batch):
@@ -212,12 +212,12 @@ def loop(
     print(f"  Cargando best checkpoint: {best_path.name}")
     best_model = ConvNet().to(DEVICE)
     best_model.load_state_dict(torch.load(best_path, map_location=DEVICE))
-    val_ds_cm = DatasetCNN(split="val", seed=SEED, return_song_id=True)
+    val_ds_cm = Gtzan(split="val", seed=SEED, model="cnn")
     cm = compute_confusion_matrix_songs(
       best_model, val_ds_cm, batch_size, DEVICE,
     )
     plot_confusion_matrix(
-      cm, DatasetCNN.GENRES, save_dir / "confusion_matrix.png",
+      cm, val_ds_cm.GENRES, save_dir / "confusion_matrix.png",
       title="Song-level (soft voting)",
     )
     print(
@@ -270,8 +270,8 @@ def main() -> None:
 
   set_seed(SEED)
 
-  train_ds = DatasetCNN(split="train", seed=SEED)
-  val_ds = DatasetCNN(split="val", seed=SEED)
+  train_ds = Gtzan(split="train", seed=SEED, model="cnn")
+  val_ds = Gtzan(split="val", seed=SEED, model="cnn")
 
   train_loader = DataLoader(
     train_ds,

@@ -1,95 +1,204 @@
+import argparse
 import os
+import shutil
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass
 
 import librosa
-import librosa.display
-import matplotlib.pyplot as plt
-import numpy as np
+import matplotlib
 
-INPUT_DIR = "data/genres_original"
-OUTPUT_DIR = "spectrograms"
-WINDOW_LENGTH_MS = 3000
-# === NUEVA CONFIGURACIÓN DE OVERLAP ===
-HOP_LENGTH_MS = 1000  # Nos desplazamos 1 segundo en cada paso (Overlap de 2 segundos)
-# ======================================
+matplotlib.use("Agg")  # no display; safe inside containers
+import matplotlib.cm as cm
+import numpy as np
+from PIL import Image
+
+# Two presets: default reads from dataset/songs -> dataset/spectrograms;
+# --gtzan swaps to the canonical gtzan/songs -> gtzan/spectrograms layout.
+DATASET_INPUT_DIR = "dataset/songs"
+DATASET_OUTPUT_DIR = "dataset/spectrograms"
+GTZAN_INPUT_DIR = "gtzan/songs"
+GTZAN_OUTPUT_DIR = "gtzan/spectrograms"
+
+# Canonical GTZAN chunking: 3 seconds per chunk.
+WINDOW_SECONDS = 3.0
+STRIDE_SECONDS = 3.0  # with --da the stride drops to 1.0 (2 s overlap)
+
+# Mel parameters: see docs in the original one-channel script.
+N_FFT = 2048
+HOP_LENGTH = 512
+N_MELS = 128
+FMIN = 20
+FMAX = 8000
+TOP_DB = 80
+
+# Fine-tuning (InceptionV3) image size.
+FT_IMG_SIZE = 299
+
+# Matplotlib output size for the RGB pipeline (~299x299 at dpi=100).
 IMG_SIZE_INCHES = (2.99, 2.99)
 DPI = 100
+
 MAX_WORKERS = 4
 
 
-def generate_spectrogram(y: np.ndarray, sr: int, output_path: str) -> None:
-    # Usar escala Mel con 128 bancos de filtros
-    mel_spec = librosa.feature.melspectrogram(y=y, sr=sr, n_mels=128, fmax=sr/2)
-    mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
-
-    fig, ax = plt.subplots(figsize=IMG_SIZE_INCHES, dpi=DPI)
-    librosa.display.specshow(mel_spec_db, sr=sr, x_axis=None, y_axis=None, ax=ax, fmax=sr/2)
-    ax.set_axis_off()
-    ax.set_aspect("auto")
-    fig.savefig(output_path, dpi=DPI, pad_inches=0)
-    plt.close(fig)
+@dataclass(frozen=True)
+class JobConfig:
+    # Immutable bundle passed to each worker; avoids wide positional tuples.
+    stride_seconds: float
+    rgb: bool
+    ft: bool
+    da: bool
 
 
-def process_song(wav_path: str, song_output_dir: str) -> tuple[str, str]:
-    # 1. Cargar el audio original completo
-    y_full, sr = librosa.load(wav_path, sr=None)
-    sr = int(sr)
-    
-    # 2. Calcular tamaños en número de muestras (samples)
-    samples_per_window = int(WINDOW_LENGTH_MS / 1000 * sr)
-    samples_per_hop = int(HOP_LENGTH_MS / 1000 * sr)
+def mel_db(y: np.ndarray, sr: int) -> np.ndarray:
+    # Single place where the mel spectrogram is computed.
+    mel = librosa.feature.melspectrogram(
+        y=y,
+        sr=sr,
+        n_fft=N_FFT,
+        hop_length=HOP_LENGTH,
+        n_mels=N_MELS,
+        fmin=FMIN,
+        fmax=FMAX,
+        power=2.0,
+    )
+    return librosa.power_to_db(mel, ref=np.max, top_db=TOP_DB)
 
-    # 3. Generar las variaciones de tono completas
-    y_pitch_up = librosa.effects.pitch_shift(y_full, sr=sr, n_steps=1.0)
-    y_pitch_down = librosa.effects.pitch_shift(y_full, sr=sr, n_steps=-1.0)
 
-    variants = {
+def render_grayscale(mel_db_arr: np.ndarray, target_size: tuple[int, int] | None) -> np.ndarray:
+    # Map dB ([-TOP_DB, 0]) to uint8 ([0, 255]) and invert so energy = bright.
+    img = ((mel_db_arr + TOP_DB) / TOP_DB * 255).clip(0, 255).astype(np.uint8)
+    img = 255 - img
+    if target_size is not None:
+        img = np.array(Image.fromarray(img, mode="L").resize(target_size, Image.BILINEAR))
+    return img
+
+
+def render_rgb(mel_db_arr: np.ndarray, target_size: tuple[int, int]) -> np.ndarray:
+    # Map dB to [0, 1] and apply viridis directly — avoids the matplotlib
+    # round-trip to a PNG file, which broke inside ProcessPoolExecutor workers.
+    normalized = ((mel_db_arr + TOP_DB) / TOP_DB).clip(0, 1)
+    rgba = cm.viridis(normalized)  # (H, W, 4) float in [0, 1]
+    rgb = (rgba[..., :3] * 255).clip(0, 255).astype(np.uint8)
+    if target_size is not None:
+        rgb = np.array(Image.fromarray(rgb, mode="RGB").resize(target_size, Image.BILINEAR))
+    return rgb
+
+
+def save_spectrogram(
+    y: np.ndarray,
+    sr: int,
+    output_path: str,
+    cfg: JobConfig,
+) -> None:
+    # Compute mel once; pick the renderer + size based on flags.
+    mel_db_arr = mel_db(y, sr)
+    target_size = (FT_IMG_SIZE, FT_IMG_SIZE) if cfg.ft else None
+    if cfg.rgb:
+        rgb_img = render_rgb(mel_db_arr, target_size or (mel_db_arr.shape[1], mel_db_arr.shape[0]))
+        Image.fromarray(rgb_img, mode="RGB").save(output_path)
+    else:
+        gray = render_grayscale(mel_db_arr, target_size)
+        Image.fromarray(gray, mode="L").save(output_path)
+
+
+def pitch_variants(y_full: np.ndarray, sr: int, cfg: JobConfig) -> dict[str, np.ndarray]:
+    # Only --da produces the extra pitch-shifted copies.
+    if not cfg.da:
+        return {"original": y_full}
+    return {
         "original": y_full,
-        "pitch_up": y_pitch_up,
-        "pitch_down": y_pitch_down
+        "pitch_up": librosa.effects.pitch_shift(y_full, sr=sr, n_steps=1.0),
+        "pitch_down": librosa.effects.pitch_shift(y_full, sr=sr, n_steps=-1.0),
     }
 
-    # 4. Procesar los segmentos usando la ventana móvil con Overlap
-    start_sample = 0
-    segment_count = 0
-    
-    # Determinamos la longitud total (todas las variantes miden lo mismo)
-    total_samples = len(y_full)
 
-    # El bucle avanza mientras podamos extraer una ventana completa de 3 segundos
-    while start_sample + samples_per_window <= total_samples:
-        end_sample = start_sample + samples_per_window
+def clean_song_dir(song_output_dir: str) -> None:
+    # Wipe any leftover PNGs so re-runs don't mix old + new naming schemes.
+    if not os.path.isdir(song_output_dir):
+        return
+    for entry in os.listdir(song_output_dir):
+        path = os.path.join(song_output_dir, entry)
+        if os.path.isdir(path):
+            shutil.rmtree(path, ignore_errors=True)
+        else:
+            os.remove(path)
 
-        for suffix, y_audio in variants.items():
-            y_segment = y_audio[start_sample:end_sample]
 
-            # El nombre guarda el índice del segmento correlativo y su variante
-            output_path = os.path.join(song_output_dir, f"{segment_count}_{suffix}.png")
-            generate_spectrogram(y_segment, sr, output_path)
+def process_song(args: tuple[str, str, JobConfig]) -> tuple[str, str | None]:
+    # Unpack worker args; JobConfig carries the per-run flags.
+    wav_path, song_output_dir, cfg = args
 
-        # DESPLAZAMIENTO: Avanzamos solo el tamaño del HOP (1 segundo) en vez de la ventana completa
-        start_sample += samples_per_hop
-        segment_count += 1
+    try:
+        y_full, sr = librosa.load(wav_path, sr=None, mono=True)
+    except Exception as exc:
+        print(f"[WARN] failed to load {wav_path}: {exc}")
+        return wav_path, None
+
+    sr = int(sr)
+    samples_per_window = int(WINDOW_SECONDS * sr)
+    samples_per_stride = int(cfg.stride_seconds * sr)
+
+    clean_song_dir(song_output_dir)
+    os.makedirs(song_output_dir, exist_ok=True)
+
+    # Walk the song until a full 3-second window no longer fits.
+    segment_idx = 0
+    start = 0
+    while start + samples_per_window <= len(y_full):
+        end = start + samples_per_window
+        for suffix, y_audio in pitch_variants(y_full[start:end], sr, cfg).items():
+            output_path = os.path.join(
+                song_output_dir,
+                f"{segment_idx}_{suffix}.png" if cfg.da else f"{segment_idx}.png",
+            )
+            save_spectrogram(y_audio, sr, output_path, cfg)
+        start += samples_per_stride
+        segment_idx += 1
 
     return wav_path, song_output_dir
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Generate mel-spectrogram PNGs from GTZAN.")
+    parser.add_argument("--rgb", action="store_true", help="Render RGB images (InceptionV3 style).")
+    parser.add_argument("--ft", action="store_true", help="Resize output to 299x299 for fine-tuning.")
+    parser.add_argument("--da", action="store_true", help="Pitch augmentation (+/-1) and 1 s hop.")
+    parser.add_argument(
+        "--gtzan",
+        action="store_true",
+        help="Read from gtzan/songs and write to gtzan/spectrograms (default: dataset/...).",
+    )
+    parser.add_argument("--max-workers", type=int, default=MAX_WORKERS, help="Parallel worker count.")
+    return parser.parse_args()
+
+
 def main() -> None:
-    try:
-        if os.path.exists(OUTPUT_DIR):
-            os.system(f"chown -R $(id -u):$(id -g) {OUTPUT_DIR} 2>/dev/null")
+    args = parse_args()
+    input_dir = GTZAN_INPUT_DIR if args.gtzan else DATASET_INPUT_DIR
+    output_dir = GTZAN_OUTPUT_DIR if args.gtzan else DATASET_OUTPUT_DIR
+    cfg = JobConfig(
+        stride_seconds=1.0 if args.da else STRIDE_SECONDS,
+        rgb=args.rgb,
+        ft=args.ft,
+        da=args.da,
+    )
+
+    try:  # mirror the old script's "best-effort chown" for Docker volumes
+        if os.path.exists(output_dir):
+            os.system(f"chown -R $(id -u):$(id -g) {output_dir} 2>/dev/null")
     except Exception:
         pass
 
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
+    os.makedirs(output_dir, exist_ok=True)
 
-    work_items: list[tuple[str, str]] = []
-    for genre in sorted(os.listdir(INPUT_DIR)):
-        genre_input_dir = os.path.join(INPUT_DIR, genre)
+    work_items: list[tuple[str, str, JobConfig]] = []
+    for genre in sorted(os.listdir(input_dir)):
+        genre_input_dir = os.path.join(input_dir, genre)
         if not os.path.isdir(genre_input_dir):
             continue
 
-        genre_output_dir = os.path.join(OUTPUT_DIR, genre)
+        genre_output_dir = os.path.join(output_dir, genre)
         os.makedirs(genre_output_dir, exist_ok=True)
 
         for wav_file in sorted(os.listdir(genre_input_dir)):
@@ -101,14 +210,24 @@ def main() -> None:
             song_output_dir = os.path.join(genre_output_dir, song_name)
             os.makedirs(song_output_dir, exist_ok=True)
 
-            work_items.append((wav_path, song_output_dir))
+            work_items.append((wav_path, song_output_dir, cfg))
 
-    print(f"Iniciando procesamiento de {len(work_items)} canciones con Overlap y Pitch Augmentation...")
-    with ProcessPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        for wav_path, song_out in executor.map(process_song, *zip(*work_items)):
+    mode = "RGB" if cfg.rgb else "L"
+    size = f"{FT_IMG_SIZE}x{FT_IMG_SIZE}" if cfg.ft else "native"
+    aug = "with pitch+hop augmentation" if cfg.da else "no augmentation"
+    preset = "gtzan" if args.gtzan else "dataset"
+    print(
+        f"Processing {len(work_items)} songs ({preset}) with {args.max_workers} workers "
+        f"({mode} {size}, {aug}, stride={cfg.stride_seconds}s)..."
+    )
+
+    with ProcessPoolExecutor(max_workers=args.max_workers) as executor:
+        for _, song_out in executor.map(process_song, work_items):
+            if song_out is None:
+                continue
             genre = os.path.basename(os.path.dirname(song_out))
             song_name = os.path.basename(song_out)
-            print(f"Processed (Overlap x3): {genre}/{song_name}")
+            print(f"Processed: {genre}/{song_name}")
 
 
 if __name__ == "__main__":

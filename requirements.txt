@@ -8,3 +8,4 @@ scikit-learn
 torchsummary
 torchaudio
 scikit-learn
+yt-dlp

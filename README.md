@@ -25,8 +25,18 @@ verifies that PyTorch can see your AMD card.
 To generate the spectrogram dataset once you're ready to train:
 
 ```
-make spectrograms    # runs src/spectrograms.py against data/genres_original/
+make spectrograms                                              # default: grayscale PNGs from dataset/songs into dataset/spectrograms
+make spectrograms FLAGS="--gtzan"                              # GTZAN layout (gtzan/songs -> gtzan/spectrograms)
+make spectrograms FLAGS="--rgb --ft --da"                      # InceptionV3 fine-tuning dataset from dataset/
+make spectrograms FLAGS="--gtzan --rgb --ft --da"              # InceptionV3 fine-tuning dataset from gtzan/
 ```
+
+The generator in `src/spectrograms.py` accepts these flags (combinable):
+
+- `--gtzan`: swap input/output to `gtzan/songs` and `gtzan/spectrograms` (default: `dataset/`).
+- `--rgb`: render RGB images via matplotlib (InceptionV3 pipeline).
+- `--ft`: resize the output to 299x299.
+- `--da`: pitch-shift (+/-1 semitone) and 1-second hop (overlap), otherwise 3-second stride.
 
 To fine-tune Inception v3 on the generated spectrograms:
 
@@ -58,7 +68,7 @@ matching value:
 | `make down`         | Stops and removes the container.                                                                                                                                                                                   |
 | `make shell`        | Opens a bash session inside the container.                                                                                                                                                                         |
 | `make health`       | Runs `src/health.py` (GPU detect + CPU/GPU matmul benchmark).                                                                                                                                                      |
-| `make spectrograms` | Runs `src/spectrograms.py` to generate the spectrogram dataset from `data/genres_original/`. See `docs/dataset.md` for how it works.                                                                               |
+| `make spectrograms` | Runs `src/spectrograms.py` to generate the spectrogram dataset. Default reads from `dataset/songs` and writes to `dataset/spectrograms`. Pass flags via `FLAGS="--gtzan"` (use `gtzan/` instead), `FLAGS="--rgb"`, `FLAGS="--ft"`, `FLAGS="--da"` — all combinable. See `docs/dataset.md` for how it works. |
 | `make fine_tuning`  | Runs `src/fine_tuning.py` to fine-tune Inception v3 on the spectrogram dataset. Saves a timestamped checkpoint to `checkpoints/YYYYMMDD_HHMMSS/`. Override defaults with `BATCH_SIZE=N EPOCHS=N make fine_tuning`. |
 | `make clean`        | Stops the container; removes `.env`, `.venv/`, and Python bytecode caches.                                                                                                                                         |
 
