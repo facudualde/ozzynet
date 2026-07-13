@@ -6,6 +6,10 @@ __pycache__/
 
 kaggle.json
 
-data/
+gtzan/
 
-spectrograms/
+checkpoints/
+
+dataset/
+
+test/
