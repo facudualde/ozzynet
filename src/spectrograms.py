@@ -127,13 +127,13 @@ def clean_song_dir(song_output_dir: str) -> None:
 
 def process_song(args: tuple[str, str, JobConfig]) -> tuple[str, str | None]:
     # Unpack worker args; JobConfig carries the per-run flags.
-    wav_path, song_output_dir, cfg = args
+    song_path, song_output_dir, cfg = args
 
     try:
-        y_full, sr = librosa.load(wav_path, sr=None, mono=True)
+        y_full, sr = librosa.load(song_path, sr=None, mono=True)
     except Exception as exc:
-        print(f"[WARN] failed to load {wav_path}: {exc}")
-        return wav_path, None
+        print(f"[WARN] failed to load {song_path}: {exc}")
+        return song_path, None
 
     sr = int(sr)
     samples_per_window = int(WINDOW_SECONDS * sr)
@@ -156,7 +156,7 @@ def process_song(args: tuple[str, str, JobConfig]) -> tuple[str, str | None]:
         start += samples_per_stride
         segment_idx += 1
 
-    return wav_path, song_output_dir
+    return song_path, song_output_dir
 
 
 def parse_args() -> argparse.Namespace:
@@ -201,16 +201,16 @@ def main() -> None:
         genre_output_dir = os.path.join(output_dir, genre)
         os.makedirs(genre_output_dir, exist_ok=True)
 
-        for wav_file in sorted(os.listdir(genre_input_dir)):
-            if not wav_file.endswith(".wav"):
+        for song_file in sorted(os.listdir(genre_input_dir)):
+            if not (song_file.endswith(".wav") or song_file.endswith(".mp3")):
                 continue
 
-            wav_path = os.path.join(genre_input_dir, wav_file)
-            song_name = os.path.splitext(wav_file)[0]
+            song_path = os.path.join(genre_input_dir, song_file)
+            song_name = os.path.splitext(song_file)[0]
             song_output_dir = os.path.join(genre_output_dir, song_name)
             os.makedirs(song_output_dir, exist_ok=True)
 
-            work_items.append((wav_path, song_output_dir, cfg))
+            work_items.append((song_path, song_output_dir, cfg))
 
     mode = "RGB" if cfg.rgb else "L"
     size = f"{FT_IMG_SIZE}x{FT_IMG_SIZE}" if cfg.ft else "native"
