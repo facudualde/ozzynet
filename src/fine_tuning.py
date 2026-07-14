@@ -204,7 +204,7 @@ def main() -> None:
     optimizer = torch.optim.AdamW(model.trainable_parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    save_dir = f"checkpoints/{timestamp}"
+    save_dir = f"checkpoints/fine_tuning/{timestamp}"
     import os
     os.makedirs(save_dir, exist_ok=True)
 

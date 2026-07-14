@@ -57,7 +57,7 @@ class _BaseSpectrogramDataset(TorchDataset):
         random_chunks_number: int | None = None,
         t: transforms.Transform | None = None,
     ) -> None:
-        assert split in ("train", "val")
+        assert split in ("train", "val", "test")
         assert 0.0 < val_ratio < 1.0
 
         self.root = Path(root) if root else Path(self.DEFAULT_ROOT)
@@ -106,9 +106,11 @@ class _BaseSpectrogramDataset(TorchDataset):
 
             for song_name in song_names:
                 in_val = song_name in val_set
-                if self.split == "val" and not in_val:
+                if self.split == "test":
+                    pass  # include all songs; val_ratio is ignored for test.
+                elif self.split == "val" and not in_val:
                     continue
-                if self.split == "train" and in_val:
+                elif self.split == "train" and in_val:
                     continue
 
                 chunk_paths = sorted((self.root / genre / song_name).glob("*.png"))

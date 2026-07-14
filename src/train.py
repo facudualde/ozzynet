@@ -252,7 +252,7 @@ def main() -> None:
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    save_dir = f"checkpoints/{timestamp}"
+    save_dir = f"checkpoints/from_scratch/{timestamp}"
     os.makedirs(save_dir, exist_ok=True)
 
     _, _, history = loop(train_loader, val_loader, model, criterion, optimizer, args.epochs, save_dir, args.dataset)

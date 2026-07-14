@@ -63,5 +63,10 @@ train:
 	docker compose exec pytorch python3 src/train.py $(BATCH_SIZE) $(EPOCHS)
 
 CHECKPOINT ?=
+.PHONY: eval
 eval:
-	docker compose exec pytorch python3 src/eval.py $(CHECKPOINT)
+	docker compose exec pytorch python3 src/eval.py $(CHECKPOINT) $(FLAGS)
+
+# Catch-all so accidental extras don't trip "no rule" errors.
+%:
+	@:
