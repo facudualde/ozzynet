@@ -14,7 +14,7 @@ from confusion_matrix import (
     plot_confusion_matrix,
     print_confusion_matrix_report,
 )
-from dataset import Gtzan
+from dataset import Custom, Gtzan
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -117,13 +117,15 @@ def loop(
     optimizer: torch.optim.Optimizer,
     epochs: int,
     save_dir: str,
+    dataset_name: str,
 ) -> tuple[str, str]:
     # Train for `epochs`; track and save both the latest and best-by-voting-acc checkpoints.
     print("=" * 60)
-    print("  Training InceptionV3 on GTZAN with soft-vote validation")
+    print(f"  Training InceptionV3 on {dataset_name} with soft-vote validation")
     print(f"  Device:  {DEVICE}")
     print(f"  Epochs:  {epochs}")
     print(f"  Batch:   {train_loader.batch_size}")
+    print(f"  Dataset: {dataset_name}")
     print(f"  Train:   {len(train_loader.dataset)} samples / {len(train_loader)} batches")
     print(f"  Val:     {len(val_loader.dataset)} samples / {len(val_loader)} batches")
     model.parameter_summary()
@@ -165,9 +167,11 @@ def loop(
 
 def parse_args() -> argparse.Namespace:
     # CLI: positional batch_size/epochs (matches make fine_tuning), optional tuning knobs.
-    parser = argparse.ArgumentParser(description="Fine-tune InceptionV3 on GTZAN mel-spectrograms.")
+    parser = argparse.ArgumentParser(description="Fine-tune InceptionV3 on mel-spectrograms.")
     parser.add_argument("batch_size", type=int)
     parser.add_argument("epochs", type=int)
+    parser.add_argument("--dataset", choices=["gtzan", "custom"], default="gtzan",
+                        help="Which dataset class to use.")
     parser.add_argument("--data_augmentation", action="store_true", help="Enable image-level augmentation.")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--lr", type=float, default=1e-5)
@@ -180,8 +184,9 @@ def main() -> None:
     args = parse_args()
     set_seed(args.seed)
 
-    train_ds = Gtzan(split="train", model="inception", random_chunks_number=10, seed=args.seed, data_augmentation=args.data_augmentation)
-    val_ds = Gtzan(split="val", model="inception", random_chunks_number=10, seed=args.seed)
+    dataset_cls = Gtzan if args.dataset == "gtzan" else Custom
+    train_ds = dataset_cls(split="train", model="inception", random_chunks_number=10, seed=args.seed, data_augmentation=args.data_augmentation)
+    val_ds = dataset_cls(split="val", model="inception", random_chunks_number=10, seed=args.seed)
 
     train_loader = DataLoader(
         train_ds, batch_size=args.batch_size, shuffle=True,
@@ -203,8 +208,8 @@ def main() -> None:
     import os
     os.makedirs(save_dir, exist_ok=True)
 
-    _, _ = loop(train_loader, val_loader, model, criterion, optimizer, args.epochs, save_dir)
-    final_evaluation(model, val_ds, args.batch_size, train_ds.GENRES, save_dir)
+    _, _ = loop(train_loader, val_loader, model, criterion, optimizer, args.epochs, save_dir, args.dataset)
+    final_evaluation(model, val_ds, args.batch_size, val_ds.GENRES, save_dir)
     print(f"Model + report saved under: {save_dir}")
 
 
