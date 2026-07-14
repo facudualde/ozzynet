@@ -54,9 +54,6 @@ spectrograms:
 %:
 	@:
 
-hola:
-	docker compose exec pytorch python3 src/hola.py
-
 BATCH_SIZE ?= 32
 EPOCHS     ?= 50
 fine_tuning:

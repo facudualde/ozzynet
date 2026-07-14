@@ -14,14 +14,21 @@ from PIL import Image
 
 # Two presets: default reads from dataset/songs -> dataset/spectrograms;
 # --gtzan swaps to the canonical gtzan/songs -> gtzan/spectrograms layout.
+# --type test swaps <root>/songs -> <root>/test/songs for held-out eval songs.
 DATASET_INPUT_DIR = "dataset/songs"
 DATASET_OUTPUT_DIR = "dataset/spectrograms"
 GTZAN_INPUT_DIR = "gtzan/songs"
 GTZAN_OUTPUT_DIR = "gtzan/spectrograms"
+DATASET_TEST_INPUT_DIR = "dataset/test/songs"
+DATASET_TEST_OUTPUT_DIR = "dataset/test/spectrograms"
+GTZAN_TEST_INPUT_DIR = "gtzan/test/songs"
+GTZAN_TEST_OUTPUT_DIR = "gtzan/test/spectrograms"
 
 # Canonical GTZAN chunking: 3 seconds per chunk.
 WINDOW_SECONDS = 3.0
-STRIDE_SECONDS = 3.0  # with --da the stride drops to 1.0 (2 s overlap)
+DEFAULT_HOP_SECONDS = 3.0
+# Force sample rate so train and test chunks share dimensions regardless of input.
+SR = 22050
 
 # Mel parameters: see docs in the original one-channel script.
 N_FFT = 2048
@@ -44,10 +51,10 @@ MAX_WORKERS = 4
 @dataclass(frozen=True)
 class JobConfig:
     # Immutable bundle passed to each worker; avoids wide positional tuples.
-    stride_seconds: float
+    hop_seconds: float
     rgb: bool
     ft: bool
-    da: bool
+    pitch: bool
 
 
 def mel_db(y: np.ndarray, sr: int) -> np.ndarray:
@@ -103,8 +110,8 @@ def save_spectrogram(
 
 
 def pitch_variants(y_full: np.ndarray, sr: int, cfg: JobConfig) -> dict[str, np.ndarray]:
-    # Only --da produces the extra pitch-shifted copies.
-    if not cfg.da:
+    # Only --pitch produces the extra pitch-shifted copies.
+    if not cfg.pitch:
         return {"original": y_full}
     return {
         "original": y_full,
@@ -130,14 +137,14 @@ def process_song(args: tuple[str, str, JobConfig]) -> tuple[str, str | None]:
     song_path, song_output_dir, cfg = args
 
     try:
-        y_full, sr = librosa.load(song_path, sr=None, mono=True)
+        y_full, sr = librosa.load(song_path, sr=SR, mono=True)
     except Exception as exc:
         print(f"[WARN] failed to load {song_path}: {exc}")
         return song_path, None
 
     sr = int(sr)
     samples_per_window = int(WINDOW_SECONDS * sr)
-    samples_per_stride = int(cfg.stride_seconds * sr)
+    samples_per_hop = int(cfg.hop_seconds * sr)
 
     clean_song_dir(song_output_dir)
     os.makedirs(song_output_dir, exist_ok=True)
@@ -150,38 +157,65 @@ def process_song(args: tuple[str, str, JobConfig]) -> tuple[str, str | None]:
         for suffix, y_audio in pitch_variants(y_full[start:end], sr, cfg).items():
             output_path = os.path.join(
                 song_output_dir,
-                f"{segment_idx}_{suffix}.png" if cfg.da else f"{segment_idx}.png",
+                f"{segment_idx}_{suffix}.png" if cfg.pitch else f"{segment_idx}.png",
             )
             save_spectrogram(y_audio, sr, output_path, cfg)
-        start += samples_per_stride
+        start += samples_per_hop
         segment_idx += 1
 
     return song_path, song_output_dir
+
+
+def _paths(type_: str, gtzan: bool) -> tuple[str, str]:
+    # Resolve (input_dir, output_dir) from the --type/--gtzan combination.
+    if type_ == "test":
+        return (GTZAN_TEST_INPUT_DIR, GTZAN_TEST_OUTPUT_DIR) if gtzan else (DATASET_TEST_INPUT_DIR, DATASET_TEST_OUTPUT_DIR)
+    return (GTZAN_INPUT_DIR, GTZAN_OUTPUT_DIR) if gtzan else (DATASET_INPUT_DIR, DATASET_OUTPUT_DIR)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate mel-spectrogram PNGs from GTZAN.")
     parser.add_argument("--rgb", action="store_true", help="Render RGB images (InceptionV3 style).")
     parser.add_argument("--ft", action="store_true", help="Resize output to 299x299 for fine-tuning.")
-    parser.add_argument("--da", action="store_true", help="Pitch augmentation (+/-1) and 1 s hop.")
+    parser.add_argument("--pitch", action="store_true", help="Pitch augmentation (+/-1 semitone). Does not affect hop.")
+    parser.add_argument(
+        "--hop",
+        type=float,
+        default=DEFAULT_HOP_SECONDS,
+        help="Stride seconds (default 3.0). Range (0, 3.0].",
+    )
+    parser.add_argument(
+        "--type",
+        choices=["train", "test"],
+        default="train",
+        help="train reads <root>/songs, test reads <root>/test/songs (held-out eval).",
+    )
     parser.add_argument(
         "--gtzan",
         action="store_true",
-        help="Read from gtzan/songs and write to gtzan/spectrograms (default: dataset/...).",
+        help="Read from gtzan/(test/)songs and write to gtzan/(test/)spectrograms (default: dataset/...).",
     )
     parser.add_argument("--max-workers", type=int, default=MAX_WORKERS, help="Parallel worker count.")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if not 0 < args.hop <= WINDOW_SECONDS:
+        parser.error(f"--hop must be in (0, {WINDOW_SECONDS}]")
+    return args
 
 
 def main() -> None:
     args = parse_args()
-    input_dir = GTZAN_INPUT_DIR if args.gtzan else DATASET_INPUT_DIR
-    output_dir = GTZAN_OUTPUT_DIR if args.gtzan else DATASET_OUTPUT_DIR
+
+    # --pitch is meaningless on held-out test songs; warn and force-disable instead of erroring out.
+    pitch_effective = args.pitch and args.type == "train"
+    if args.pitch and args.type == "test":
+        print("[WARN] --pitch is ignored with --type test (no augmentation on test songs)")
+
+    input_dir, output_dir = _paths(args.type, args.gtzan)
     cfg = JobConfig(
-        stride_seconds=1.0 if args.da else STRIDE_SECONDS,
+        hop_seconds=args.hop,
         rgb=args.rgb,
         ft=args.ft,
-        da=args.da,
+        pitch=pitch_effective,
     )
 
     try:  # mirror the old script's "best-effort chown" for Docker volumes
@@ -214,11 +248,10 @@ def main() -> None:
 
     mode = "RGB" if cfg.rgb else "L"
     size = f"{FT_IMG_SIZE}x{FT_IMG_SIZE}" if cfg.ft else "native"
-    aug = "with pitch+hop augmentation" if cfg.da else "no augmentation"
     preset = "gtzan" if args.gtzan else "dataset"
     print(
-        f"Processing {len(work_items)} songs ({preset}) with {args.max_workers} workers "
-        f"({mode} {size}, {aug}, stride={cfg.stride_seconds}s)..."
+        f"Processing {len(work_items)} songs ({preset}/{args.type}) with {args.max_workers} workers "
+        f"({mode} {size}, pitch={'on' if cfg.pitch else 'off'}, hop={cfg.hop_seconds}s)..."
     )
 
     with ProcessPoolExecutor(max_workers=args.max_workers) as executor:
