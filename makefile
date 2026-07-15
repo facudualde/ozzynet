@@ -34,7 +34,6 @@ clean:
 	rm -rf spectrograms
 
 up:
-	mkdir -p spectrograms
 	mkdir -p checkpoints
 	docker compose up -d
 
@@ -49,11 +48,11 @@ health:
 
 .PHONY: spectrograms
 spectrograms:
-	docker compose exec pytorch python3 src/spectrograms.py
+	docker compose exec pytorch python3 src/spectrograms.py $(FLAGS)
 
-.PHONY: spectrograms_one_channel
-spectrograms_one_channel:
-	docker compose exec pytorch python3 src/spectrograms_one_channel.py
+# Catch-all so accidental extras don't trip "no rule" errors.
+%:
+	@:
 
 BATCH_SIZE ?= 32
 EPOCHS     ?= 50
@@ -64,5 +63,10 @@ train:
 	docker compose exec pytorch python3 src/train.py $(BATCH_SIZE) $(EPOCHS)
 
 CHECKPOINT ?=
+.PHONY: eval
 eval:
-	docker compose exec pytorch python3 src/eval.py $(CHECKPOINT)
+	docker compose exec pytorch python3 src/eval.py $(CHECKPOINT) $(FLAGS)
+
+# Catch-all so accidental extras don't trip "no rule" errors.
+%:
+	@:

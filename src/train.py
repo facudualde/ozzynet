@@ -1,314 +1,266 @@
-"""Training script for ConvNet on GTZAN mel-spectrograms."""
+"""Training script for ConvNet on mel-spectrograms (Gtzan or Custom)."""
 
-import sys
+import argparse
+import os
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta
-from pathlib import Path
 
 import matplotlib.pyplot as plt
+import numpy as np
 import torch
 from torch import nn
 from torch.utils.data import DataLoader
 
 from cnn import ConvNet
 from confusion_matrix import (
-  compute_confusion_matrix_songs,
-  plot_confusion_matrix,
+    compute_confusion_matrix_songs,
+    plot_confusion_matrix,
+    print_confusion_matrix_report,
 )
-from dataset_cnn import DatasetCNN
+from dataset import Custom, Gtzan
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-SEED = 42
-
-def format_duration(seconds: float) -> str:
-  return str(timedelta(seconds=int(seconds)))
 
 
 def set_seed(seed: int) -> None:
-  torch.manual_seed(seed)
-  if torch.cuda.is_available():
-    torch.cuda.manual_seed_all(seed)
+    # Deterministic seeds for torch + numpy + cuda so re-runs are reproducible.
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def format_duration(seconds: float) -> str:
+    return str(timedelta(seconds=int(seconds)))
 
 
 def train_one_epoch(
-  model: nn.Module,
-  loader: DataLoader,
-  criterion: nn.Module,
-  optimizer: torch.optim.Optimizer,
+    loader: DataLoader,
+    model: nn.Module,
+    criterion: nn.Module,
+    optimizer: torch.optim.Optimizer,
 ) -> tuple[float, float]:
-  model.train()
-  total_loss, total_correct, total = 0.0, 0, 0
-  for X, y in loader:
-    X, y = X.to(DEVICE), y.to(DEVICE)
-    optimizer.zero_grad()
-    logits = model(X)
-    loss = criterion(logits, y)
-    loss.backward()
-    optimizer.step()
-    bs = X.size(0)
-    total_loss += loss.item() * bs
-    total_correct += (logits.argmax(1) == y).sum().item()
-    total += bs
-  return total_loss / total, total_correct / total
+    # One training pass; returns (avg_loss, accuracy_pct).
+    model.train()
+    total_loss, correct, total = 0.0, 0, 0
+    for X, y, _ in loader:
+        X, y = X.to(DEVICE), y.to(DEVICE)
+        optimizer.zero_grad()
+        logits = model(X)
+        loss = criterion(logits, y)
+        loss.backward()
+        optimizer.step()
+        bs = X.size(0)
+        total_loss += loss.item() * bs
+        correct += (logits.argmax(1) == y).sum().item()
+        total += bs
+    return total_loss / total, 100.0 * correct / total
 
 
 @torch.no_grad()
-def validate_chunks(
-  model: nn.Module,
-  loader: DataLoader,
-  criterion: nn.Module,
-) -> tuple[float, float]:
-  model.eval()
-  total_loss, total_correct, total = 0.0, 0, 0
-  for X, y in loader:
-    X, y = X.to(DEVICE), y.to(DEVICE)
-    logits = model(X)
-    loss = criterion(logits, y)
-    bs = X.size(0)
-    total_loss += loss.item() * bs
-    total_correct += (logits.argmax(1) == y).sum().item()
-    total += bs
-  return total_loss / total, total_correct / total
+def validate(
+    loader: DataLoader,
+    model: nn.Module,
+    criterion: nn.Module,
+) -> tuple[float, float, float]:
+    # Soft-vote per song; returns (voting_acc_pct, chunk_acc_pct, avg_chunk_loss).
+    model.eval()
+    song_probs: dict[str, list[torch.Tensor]] = defaultdict(list)
+    song_labels: dict[str, int] = {}
+    chunk_loss, chunk_correct, chunk_total = 0.0, 0, 0
+    for X, y, sids in loader:
+        X, y = X.to(DEVICE), y.to(DEVICE)
+        logits = model(X)
+        chunk_loss += criterion(logits, y).item() * X.size(0)
+        chunk_correct += (logits.argmax(1) == y).sum().item()
+        chunk_total += X.size(0)
+        probs = torch.softmax(logits, dim=1).cpu()
+        for i, sid in enumerate(sids):
+            song_probs[sid].append(probs[i])
+            song_labels[sid] = y[i].item()
+
+    correct_songs = sum(
+        (torch.stack(p).mean(0).argmax().item() == song_labels[sid])
+        for sid, p in song_probs.items()
+    )
+    voting_acc = 100.0 * correct_songs / max(len(song_probs), 1)
+    chunk_acc = 100.0 * chunk_correct / max(chunk_total, 1)
+    return voting_acc, chunk_acc, chunk_loss / max(chunk_total, 1)
 
 
-@torch.no_grad()
-def validate_songs(
-  model: nn.Module,
-  batch_size: int,
-) -> float:
-  """Song-level accuracy via soft voting (mean of softmax probabilities)."""
-  song_ds = DatasetCNN(
-    split="val",
-    seed=SEED,
-    return_song_id=True,
-  )
+def plot_history(history: dict, save_dir: str) -> None:
+    # Accuracy curve: train, val chunk, val song.
+    epochs = range(1, len(history["train_acc"]) + 1)
+    plt.figure(figsize=(8, 5))
+    plt.plot(epochs, history["train_acc"], label="Train acc", marker="o")
+    plt.plot(epochs, history["val_chunk_acc"], label="Val acc (chunk)", marker="o")
+    plt.plot(epochs, history["val_song_acc"], label="Val acc (song)", marker="o")
+    plt.xlabel("Epoch")
+    plt.ylabel("Accuracy (%)")
+    plt.title("Accuracy curves - ConvNet")
+    plt.legend()
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    out = f"{save_dir}/training_curves.png"
+    plt.savefig(out, dpi=120)
+    plt.close()
+    print(f"  >> Plot saved: {out}")
 
-  def collate(batch):
-    imgs, labels, sids = zip(*batch)
-    return torch.stack(imgs), torch.tensor(labels), list(sids)
 
-  loader = DataLoader(
-    song_ds,
-    batch_size=batch_size,
-    shuffle=False,
-    num_workers=2,
-    pin_memory=True,
-    collate_fn=collate,
-  )
+def plot_loss_history(history: dict, save_dir: str) -> None:
+    # Loss curve: train and val.
+    epochs = range(1, len(history["train_loss"]) + 1)
+    plt.figure(figsize=(8, 5))
+    plt.plot(epochs, history["train_loss"], label="Train loss", marker="o")
+    plt.plot(epochs, history["val_loss"], label="Val loss", marker="o")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.title("Loss curves - ConvNet")
+    plt.legend()
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+    out = f"{save_dir}/training_curves_loss.png"
+    plt.savefig(out, dpi=120)
+    plt.close()
+    print(f"  >> Plot saved: {out}")
 
-  model.eval()
-  song_probs: dict[str, list[torch.Tensor]] = defaultdict(list)
-  song_labels: dict[str, int] = {}
 
-  for X, y, sids in loader:
-    X = X.to(DEVICE)
-    probs = torch.softmax(model(X), dim=1).cpu()
-    for i, sid in enumerate(sids):
-      song_probs[sid].append(probs[i])
-      song_labels[sid] = y[i].item()
+def final_evaluation(
+    model: nn.Module,
+    val_dataset: torch.utils.data.Dataset,
+    batch_size: int,
+    save_dir: str,
+) -> None:
+    # Song-level confusion matrix + textual report at the end of training.
+    cm = compute_confusion_matrix_songs(model, val_dataset, batch_size, DEVICE)
+    plot_confusion_matrix(
+        cm, val_dataset.GENRES,
+        save_path=f"{save_dir}/confusion_matrix.png",
+        title="Song-level (soft voting)",
+    )
+    print_confusion_matrix_report(cm, val_dataset.GENRES, title="Song-level (soft voting)")
 
-  correct = 0
-  for sid, probs_list in song_probs.items():
-    avg = torch.stack(probs_list).mean(0)
-    if avg.argmax().item() == song_labels[sid]:
-      correct += 1
-  return correct / len(song_probs)
 
 def loop(
-  train_loader: DataLoader,
-  val_loader: DataLoader,
-  model: nn.Module,
-  criterion: nn.Module,
-  optimizer: torch.optim.Optimizer,
-  scheduler,
-  epochs: int,
-  batch_size: int,
-) -> None:
-  print("=" * 60)
-  print("  Training ConvNet on GTZAN (3-sec chunks)")
-  print(f"  Device:  {DEVICE}")
-  print(f"  Epochs:  {epochs}")
-  print(f"  Batch:   {batch_size}")
-  print(
-    f"  Train:   {len(train_loader.dataset)} chunks "
-    f"/ {len(train_loader)} batches"
-  )
-  print(
-    f"  Val:     {len(val_loader.dataset)} chunks "
-    f"/ {len(val_loader)} batches"
-  )
-  model.parameter_summary()
-  print("=" * 60)
+    train_loader: DataLoader,
+    val_loader: DataLoader,
+    model: nn.Module,
+    criterion: nn.Module,
+    optimizer: torch.optim.Optimizer,
+    epochs: int,
+    save_dir: str,
+    dataset_name: str,
+) -> tuple[str, str, dict]:
+    # Train for `epochs`; track and save both the latest and best-by-voting-acc checkpoints.
+    print("=" * 60)
+    print("  Training ConvNet with soft-vote validation")
+    print(f"  Device:  {DEVICE}")
+    print(f"  Epochs:  {epochs}")
+    print(f"  Batch:   {train_loader.batch_size}")
+    print(f"  Dataset: {dataset_name}")
+    print(f"  Train:   {len(train_loader.dataset)} chunks / {len(train_loader)} batches")
+    print(f"  Val:     {len(val_loader.dataset)} chunks / {len(val_loader)} batches")
+    model.parameter_summary()
+    print("=" * 60)
 
-  timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-  save_dir = Path("checkpoints") / timestamp
-  save_dir.mkdir(parents=True, exist_ok=True)
-  history = {
-    "train_acc": [],
-    "val_chunk_acc": [],
-    "val_song_acc": [],
-    "train_loss": [],
-    "val_loss": [],
-  }
-  best_song_acc = 0.0
-  best_path: Path | None = None
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    latest_path = f"{save_dir}/{timestamp}_latest.pth"
+    best_path = f"{save_dir}/{timestamp}_best.pth"
+    best_acc = -1.0
+    history = {
+        "train_acc": [],
+        "val_chunk_acc": [],
+        "val_song_acc": [],
+        "train_loss": [],
+        "val_loss": [],
+    }
 
-  total_start = time.perf_counter()
-  for epoch in range(1, epochs + 1):
-    print(f"\nEpoch {epoch}/{epochs}")
-    print("-" * 60)
-    epoch_start = time.perf_counter()
+    total_start = time.perf_counter()
+    for epoch in range(1, epochs + 1):
+        print(f"\nEpoch {epoch}/{epochs}")
+        print("-" * 60)
 
-    train_loss, train_acc = train_one_epoch(
-      model, train_loader, criterion, optimizer,
-    )
-    val_loss, val_chunk_acc = validate_chunks(
-      model, val_loader, criterion,
-    )
-    song_acc = validate_songs(model, batch_size)
+        epoch_start = time.perf_counter()
+        train_loss, train_acc = train_one_epoch(train_loader, model, criterion, optimizer)
+        voting_acc, chunk_acc, val_loss = validate(val_loader, model, criterion)
 
-    scheduler.step()
-    current_lr = optimizer.param_groups[0]["lr"]
-    epoch_time = time.perf_counter() - epoch_start
+        history["train_acc"].append(train_acc)
+        history["val_chunk_acc"].append(chunk_acc)
+        history["val_song_acc"].append(voting_acc)
+        history["train_loss"].append(train_loss)
+        history["val_loss"].append(val_loss)
 
-    print(
-      f"  train_loss: {train_loss:.4f}  train_acc: {train_acc:.4f}\n"
-      f"  val_loss:   {val_loss:.4f}  "
-      f"val_acc (chunk): {val_chunk_acc:.4f}\n"
-      f"  val_acc (song/soft-vote): {song_acc:.4f}\n"
-      f"  lr: {current_lr:.6f}  time: {format_duration(epoch_time)}"
-    )
+        print(
+            f"  Train    avg_loss={train_loss:.4f}  acc={train_acc:.1f}%\n"
+            f"  Val      voting_acc={voting_acc:.1f}%  chunk_acc={chunk_acc:.1f}%  avg_loss={val_loss:.4f}\n"
+            f"  epoch {epoch} time: {format_duration(time.perf_counter() - epoch_start)}"
+        )
 
-    history["train_acc"].append(train_acc)
-    history["val_chunk_acc"].append(val_chunk_acc)
-    history["val_song_acc"].append(song_acc)
-    history["train_loss"].append(train_loss)
-    history["val_loss"].append(val_loss)
+        torch.save(model.state_dict(), latest_path)
+        if voting_acc > best_acc:
+            best_acc = voting_acc
+            torch.save(model.state_dict(), best_path)
+            print(f"  >> new best voting_acc={best_acc:.1f}% -> {best_path}")
 
-    if song_acc > best_song_acc:
-      best_song_acc = song_acc
-      best_path = save_dir / f"best_song_acc_{song_acc:.4f}.pth"
-      torch.save(model.state_dict(), best_path)
-      print(
-        f"  >> new best song_acc: {best_song_acc:.4f} "
-        f"-> {best_path.name}"
-      )
-
-  last_path = save_dir / "last.pth"
-  torch.save(model.state_dict(), last_path)
-  total_time = time.perf_counter() - total_start
-
-  print("\n" + "=" * 60)
-  print(f"  Done!  Total time: {format_duration(total_time)}")
-  print(f"  Best song_acc: {best_song_acc:.4f}  ({best_path})")
-  print(f"  Last checkpoint: {last_path}")
-  print("=" * 60)
-
-  plot_history(history, save_dir)
-  plot_loss_history(history, save_dir)
-
-  if best_path is not None and best_path.exists():
-    print(f"  Cargando best checkpoint: {best_path.name}")
-    best_model = ConvNet().to(DEVICE)
-    best_model.load_state_dict(torch.load(best_path, map_location=DEVICE))
-    val_ds_cm = DatasetCNN(split="val", seed=SEED, return_song_id=True)
-    cm = compute_confusion_matrix_songs(
-      best_model, val_ds_cm, batch_size, DEVICE,
-    )
-    plot_confusion_matrix(
-      cm, DatasetCNN.GENRES, save_dir / "confusion_matrix.png",
-      title="Song-level (soft voting)",
-    )
-    print(
-      f"  >> Plot de matriz de confusión guardado en: "
-      f"{save_dir / 'confusion_matrix.png'}"
-    )
+    total_time = time.perf_counter() - total_start
+    print("\n" + "=" * 60)
+    print(f"  Done!  Total time: {format_duration(total_time)}")
+    print(f"  Best voting acc: {best_acc:.1f}%  -> {best_path}")
+    print(f"  Latest:          {latest_path}")
+    print("=" * 60)
+    return latest_path, best_path, history
 
 
-def plot_history(history, save_dir):
-  epochs = range(1, len(history["train_acc"]) + 1)
-  plt.figure(figsize=(8, 5))
-  plt.plot(epochs, history["train_acc"], label="Train acc", marker="o")
-  plt.plot(epochs, history["val_chunk_acc"], label="Val acc (chunk)", marker="o")
-  plt.plot(epochs, history["val_song_acc"], label="Val acc (song)", marker="o")
-  plt.xlabel("Época")
-  plt.ylabel("Accuracy")
-  plt.title("Curvas de accuracy - ConvNet GTZAN")
-  plt.legend()
-  plt.grid(alpha=0.3)
-  plt.tight_layout()
-  out = save_dir / "training_curves.png"
-  plt.savefig(out, dpi=120)
-  plt.close()
-  print(f"  >> Plot guardado en: {out}")
-
-
-def plot_loss_history(history, save_dir):
-  epochs = range(1, len(history["train_loss"]) + 1)
-  plt.figure(figsize=(8, 5))
-  plt.plot(epochs, history["train_loss"], label="Train loss", marker="o")
-  plt.plot(epochs, history["val_loss"], label="Val loss", marker="o")
-  plt.xlabel("Época")
-  plt.ylabel("Loss")
-  plt.title("Curvas de loss - ConvNet GTZAN")
-  plt.legend()
-  plt.grid(alpha=0.3)
-  plt.tight_layout()
-  out = save_dir / "training_curves_loss.png"
-  plt.savefig(out, dpi=120)
-  plt.close()
-  print(f"  >> Plot guardado en: {out}")
+def parse_args() -> argparse.Namespace:
+    # CLI: positional batch_size/epochs (matches make train), optional tuning knobs.
+    parser = argparse.ArgumentParser(description="Train ConvNet on mel-spectrograms.")
+    parser.add_argument("batch_size", type=int)
+    parser.add_argument("epochs", type=int)
+    parser.add_argument("--dataset", choices=["gtzan", "custom"], default="gtzan",
+                        help="Which dataset class to use.")
+    parser.add_argument("--data_augmentation", action="store_true", help="Enable image-level augmentation.")
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--lr", type=float, default=1e-5)
+    parser.add_argument("--weight_decay", type=float, default=0.01)
+    parser.add_argument("--num_workers", type=int, default=2)
+    return parser.parse_args()
 
 
 def main() -> None:
-  if len(sys.argv) < 3:
-    print("Usage: python train.py [batch_size] [epochs]")
-    sys.exit(1)
-  batch_size = int(sys.argv[1])
-  epochs = int(sys.argv[2])
+    args = parse_args()
+    set_seed(args.seed)
 
-  set_seed(SEED)
+    dataset_cls = Gtzan if args.dataset == "gtzan" else Custom
+    train_ds = dataset_cls(split="train", seed=args.seed, model="cnn", data_augmentation=args.data_augmentation)
+    val_ds = dataset_cls(split="val", seed=args.seed, model="cnn")
 
-  train_ds = DatasetCNN(split="train", seed=SEED)
-  val_ds = DatasetCNN(split="val", seed=SEED)
+    train_loader = DataLoader(
+        train_ds, batch_size=args.batch_size, shuffle=True,
+        num_workers=args.num_workers, pin_memory=True,
+        persistent_workers=args.num_workers > 0,
+        drop_last=True,
+    )
+    val_loader = DataLoader(
+        val_ds, batch_size=args.batch_size, shuffle=False,
+        num_workers=args.num_workers, pin_memory=True,
+        persistent_workers=args.num_workers > 0,
+    )
 
-  train_loader = DataLoader(
-    train_ds,
-    batch_size=batch_size,
-    shuffle=True,
-    num_workers=2,
-    pin_memory=True,
-    drop_last=True,
-  )
-  val_loader = DataLoader(
-    val_ds,
-    batch_size=batch_size,
-    shuffle=False,
-    num_workers=2,
-    pin_memory=True,
-  )
+    model = ConvNet().to(DEVICE)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
-  model = ConvNet().to(DEVICE)
-  criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
-  optimizer = torch.optim.AdamW(
-    model.parameters(), lr=1e-3, weight_decay=1e-4,
-  )
-  scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-    optimizer, T_max=epochs,
-  )
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    save_dir = f"checkpoints/from_scratch/{timestamp}"
+    os.makedirs(save_dir, exist_ok=True)
 
-  loop(
-    train_loader,
-    val_loader,
-    model,
-    criterion,
-    optimizer,
-    scheduler,
-    epochs,
-    batch_size,
-  )
+    _, _, history = loop(train_loader, val_loader, model, criterion, optimizer, args.epochs, save_dir, args.dataset)
+    final_evaluation(model, val_ds, args.batch_size, save_dir)
+    plot_history(history, save_dir)
+    plot_loss_history(history, save_dir)
+    print(f"Model + report saved under: {save_dir}")
 
 
 if __name__ == "__main__":
-  main()
+    main()
