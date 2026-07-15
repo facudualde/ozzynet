@@ -31,11 +31,8 @@ services:
       TOKENIZERS_PARALLELISM: "false"
     volumes:
       - ./src/:/ozzynet/src
-      # - ./data/:/ozzynet/data
       - ./dataset/:/ozzynet/dataset
       - ./gtzan/:/ozzynet/gtzan
-      - ./test/:/ozzynet/test
-      # - ./spectrograms/:/ozzynet/spectrograms
       - ./checkpoints/:/ozzynet/checkpoints
       - ./entrypoint.sh:/ozzynet/entrypoint.sh
       - /etc/localtime:/etc/localtime:ro
