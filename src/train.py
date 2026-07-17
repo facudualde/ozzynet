@@ -144,6 +144,8 @@ def loop(
         print(f"\nEpoch {epoch}/{epochs}")
         print("-" * 60)
 
+        train_loader.dataset.reset_epoch_samples()
+
         epoch_start = time.perf_counter()
         train_loss, train_acc = train_one_epoch(train_loader, model, criterion, optimizer)
         voting_acc, chunk_acc, val_loss = validate(val_loader, model, criterion)
@@ -187,7 +189,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lr", type=float, default=1e-5)
     parser.add_argument("--weight_decay", type=float, default=0.01)
     parser.add_argument("--num_workers", type=int, default=2)
-    return parser.parse_args()
+    parser.add_argument("--random_chunks_number", type=int, default=10,
+                        help="Random chunks sampled per song at the start of each epoch (>= 1).")
+    args = parser.parse_args()
+    if args.random_chunks_number < 1:
+        parser.error("--random_chunks_number must be >= 1")
+    return args
 
 
 def main() -> None:
@@ -195,8 +202,15 @@ def main() -> None:
     set_seed(args.seed)
 
     dataset_cls = Gtzan if args.dataset == "gtzan" else Custom
-    train_ds = dataset_cls(split="train", seed=args.seed, model="cnn", data_augmentation=args.data_augmentation)
-    val_ds = dataset_cls(split="val", seed=args.seed, model="cnn")
+    train_ds = dataset_cls(
+        split="train", seed=args.seed, model="cnn",
+        random_chunks_number=args.random_chunks_number,
+        data_augmentation=args.data_augmentation,
+    )
+    val_ds = dataset_cls(
+        split="val", seed=args.seed, model="cnn",
+        # Validation uses the full chunk set per song for stable, comparable metrics.
+    )
 
     train_loader = DataLoader(
         train_ds, batch_size=args.batch_size, shuffle=True,

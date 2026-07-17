@@ -50,20 +50,16 @@ health:
 spectrograms:
 	docker compose exec pytorch python3 src/spectrograms.py $(FLAGS)
 
-# Catch-all so accidental extras don't trip "no rule" errors.
-%:
-	@:
-
 BATCH_SIZE ?= 32
 EPOCHS     ?= 50
-fine_tuning:
-	docker compose exec pytorch python3 src/fine_tuning.py $(BATCH_SIZE) $(EPOCHS)
-
+.PHONY: train fine_tuning eval
 train:
-	docker compose exec pytorch python3 src/train.py $(BATCH_SIZE) $(EPOCHS)
+	docker compose exec pytorch python3 src/train.py $(BATCH_SIZE) $(EPOCHS) $(FLAGS)
+
+fine_tuning:
+	docker compose exec pytorch python3 src/fine_tuning.py $(BATCH_SIZE) $(EPOCHS) $(FLAGS)
 
 CHECKPOINT ?=
-.PHONY: eval
 eval:
 	docker compose exec pytorch python3 src/eval.py $(CHECKPOINT) $(FLAGS)
 

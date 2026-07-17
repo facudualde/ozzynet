@@ -44,6 +44,7 @@ Required make variables:
 | `--lr <float>` | `1e-5` | Optimizer learning rate. |
 | `--weight_decay <float>` | `0.01` | AdamW weight decay. |
 | `--num_workers <int>` | `2` | DataLoader workers. |
+| `--random_chunks_number <int>` | `10` | Random chunks sampled per song at the start of each epoch (**train only**; validation always uses the full set for stable, comparable metrics). No-op for songs with ≤ this many chunks. Use smaller values (e.g. `5`) for stronger regularization on long Custom songs. Must be `>= 1`. |
 
 Example:
 
