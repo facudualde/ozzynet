@@ -1,0 +1,12 @@
+Best voting acc: 85.4%
+
+Commands:
+
+* spectrograms (train):
+make spectrograms FLAGS="--gtzan --ft --pitch --hop 1.0 --type train --max-workers 8"
+
+* spectrograms (test):
+make spectrograms FLAGS="--gtzan --ft --type test --max-workers 8"
+
+* fine tuning:
+make fine_tuning
