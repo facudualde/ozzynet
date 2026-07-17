@@ -11,3 +11,5 @@ gtzan/
 dataset/
 
 test/
+
+*.pth
