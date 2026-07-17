@@ -6,7 +6,6 @@ import time
 from collections import defaultdict
 from datetime import datetime, timedelta
 
-import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from torch import nn
@@ -19,6 +18,7 @@ from confusion_matrix import (
     print_confusion_matrix_report,
 )
 from dataset import Custom, Gtzan
+from plot_utils import plot_history, plot_loss_history
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -87,43 +87,6 @@ def validate(
     voting_acc = 100.0 * correct_songs / max(len(song_probs), 1)
     chunk_acc = 100.0 * chunk_correct / max(chunk_total, 1)
     return voting_acc, chunk_acc, chunk_loss / max(chunk_total, 1)
-
-
-def plot_history(history: dict, save_dir: str) -> None:
-    # Accuracy curve: train, val chunk, val song.
-    epochs = range(1, len(history["train_acc"]) + 1)
-    plt.figure(figsize=(8, 5))
-    plt.plot(epochs, history["train_acc"], label="Train acc", marker="o")
-    plt.plot(epochs, history["val_chunk_acc"], label="Val acc (chunk)", marker="o")
-    plt.plot(epochs, history["val_song_acc"], label="Val acc (song)", marker="o")
-    plt.xlabel("Epoch")
-    plt.ylabel("Accuracy (%)")
-    plt.title("Accuracy curves - ConvNet")
-    plt.legend()
-    plt.grid(alpha=0.3)
-    plt.tight_layout()
-    out = f"{save_dir}/training_curves.png"
-    plt.savefig(out, dpi=120)
-    plt.close()
-    print(f"  >> Plot saved: {out}")
-
-
-def plot_loss_history(history: dict, save_dir: str) -> None:
-    # Loss curve: train and val.
-    epochs = range(1, len(history["train_loss"]) + 1)
-    plt.figure(figsize=(8, 5))
-    plt.plot(epochs, history["train_loss"], label="Train loss", marker="o")
-    plt.plot(epochs, history["val_loss"], label="Val loss", marker="o")
-    plt.xlabel("Epoch")
-    plt.ylabel("Loss")
-    plt.title("Loss curves - ConvNet")
-    plt.legend()
-    plt.grid(alpha=0.3)
-    plt.tight_layout()
-    out = f"{save_dir}/training_curves_loss.png"
-    plt.savefig(out, dpi=120)
-    plt.close()
-    print(f"  >> Plot saved: {out}")
 
 
 def final_evaluation(
@@ -257,8 +220,8 @@ def main() -> None:
 
     _, _, history = loop(train_loader, val_loader, model, criterion, optimizer, args.epochs, save_dir, args.dataset)
     final_evaluation(model, val_ds, args.batch_size, save_dir)
-    plot_history(history, save_dir)
-    plot_loss_history(history, save_dir)
+    plot_history(history, save_dir, "ConvNet")
+    plot_loss_history(history, save_dir, "ConvNet")
     print(f"Model + report saved under: {save_dir}")
 
 

@@ -15,6 +15,7 @@ from confusion_matrix import (
     print_confusion_matrix_report,
 )
 from dataset import Custom, Gtzan
+from plot_utils import plot_history, plot_loss_history
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -75,21 +76,24 @@ def validate(
     loader: DataLoader,
     model: nn.Module,
     criterion: nn.Module,
-) -> tuple[float, float]:
-    # Soft-vote per song; returns (voting_accuracy_pct, avg_chunk_loss).
+) -> tuple[float, float, float]:
+    # Returns (voting_acc_pct, chunk_acc_pct, avg_chunk_loss) — same shape as train.py.
     song_preds = _aggregate_by_song(loader, model)
-    correct = sum((probs.argmax().item() == label) for probs, label in song_preds.values())
+    correct_songs = sum((probs.argmax().item() == label) for probs, label in song_preds.values())
 
     model.eval()
-    chunk_loss, chunk_total = 0.0, 0
+    chunk_loss, chunk_correct, chunk_total = 0.0, 0, 0
     with torch.no_grad():
         for X, y, _ in loader:
             X, y = X.to(DEVICE), y.to(DEVICE)
-            chunk_loss += criterion(model(X), y).item() * X.size(0)
+            logits = model(X)
+            chunk_loss += criterion(logits, y).item() * X.size(0)
+            chunk_correct += (logits.argmax(1) == y).sum().item()
             chunk_total += X.size(0)
 
-    voting_acc = 100.0 * correct / max(len(song_preds), 1)
-    return voting_acc, chunk_loss / max(chunk_total, 1)
+    voting_acc = 100.0 * correct_songs / max(len(song_preds), 1)
+    chunk_acc = 100.0 * chunk_correct / max(chunk_total, 1)
+    return voting_acc, chunk_acc, chunk_loss / max(chunk_total, 1)
 
 
 def final_evaluation(
@@ -118,7 +122,7 @@ def loop(
     epochs: int,
     save_dir: str,
     dataset_name: str,
-) -> tuple[str, str]:
+) -> tuple[str, str, dict]:
     # Train for `epochs`; track and save both the latest and best-by-voting-acc checkpoints.
     print("=" * 60)
     print(f"  Training InceptionV3 on {dataset_name} with soft-vote validation")
@@ -135,6 +139,13 @@ def loop(
     latest_path = f"{save_dir}/{timestamp}_latest.pth"
     best_path = f"{save_dir}/{timestamp}_best.pth"
     best_acc = -1.0
+    history = {
+        "train_acc": [],
+        "val_chunk_acc": [],
+        "val_song_acc": [],
+        "train_loss": [],
+        "val_loss": [],
+    }
 
     total_start = time.perf_counter()
     for epoch in range(1, epochs + 1):
@@ -145,11 +156,19 @@ def loop(
 
         epoch_start = time.perf_counter()
         train_loss, train_acc = train_one_epoch(train_loader, model, criterion, optimizer)
-        print(f"  Train    avg_loss={train_loss:.4f}  acc={train_acc:.1f}%")
+        voting_acc, chunk_acc, val_loss = validate(val_loader, model, criterion)
 
-        voting_acc, val_loss = validate(val_loader, model, criterion)
-        print(f"  Val      voting_acc={voting_acc:.1f}%  avg_chunk_loss={val_loss:.6f}")
-        print(f"  epoch {epoch} time: {format_duration(time.perf_counter() - epoch_start)}")
+        history["train_acc"].append(train_acc)
+        history["val_chunk_acc"].append(chunk_acc)
+        history["val_song_acc"].append(voting_acc)
+        history["train_loss"].append(train_loss)
+        history["val_loss"].append(val_loss)
+
+        print(
+            f"  Train    avg_loss={train_loss:.4f}  acc={train_acc:.1f}%\n"
+            f"  Val      voting_acc={voting_acc:.1f}%  chunk_acc={chunk_acc:.1f}%  avg_chunk_loss={val_loss:.6f}\n"
+            f"  epoch {epoch} time: {format_duration(time.perf_counter() - epoch_start)}"
+        )
 
         torch.save(model.state_dict(), latest_path)
         if voting_acc > best_acc:
@@ -162,7 +181,7 @@ def loop(
     print(f"  Best voting acc: {best_acc:.1f}%  -> {best_path}")
     print(f"  Latest:          {latest_path}")
     print("=" * 60)
-    return latest_path, best_path
+    return latest_path, best_path, history
 
 
 def parse_args() -> argparse.Namespace:
@@ -208,8 +227,10 @@ def main() -> None:
     import os
     os.makedirs(save_dir, exist_ok=True)
 
-    _, _ = loop(train_loader, val_loader, model, criterion, optimizer, args.epochs, save_dir, args.dataset)
+    _, _, history = loop(train_loader, val_loader, model, criterion, optimizer, args.epochs, save_dir, args.dataset)
     final_evaluation(model, val_ds, args.batch_size, val_ds.GENRES, save_dir)
+    plot_history(history, save_dir, "InceptionV3")
+    plot_loss_history(history, save_dir, "InceptionV3")
     print(f"Model + report saved under: {save_dir}")
 
 
