@@ -30,7 +30,7 @@ make spectrograms FLAGS="--type test --gtzan --rgb --ft"
 
 ## `make train` → `src/train.py`
 
-Trains a ConvNet from scratch on the spectrogram dataset. Saves `{ts}_latest.pth` and `{ts}_best.pth` to `checkpoints/from_scratch/<ts>/`.
+Trains a ConvNet from scratch on the spectrogram dataset. Saves only the best checkpoint (by val voting accuracy) to `checkpoints/from_scratch/<ts>/<ts>_best.pth`. Generates `training_curves.png` and `training_curves_loss.png`. To inspect the confusion matrix on the test set, run `make eval ... --model cnn` afterward.
 
 Required make variables:
 
@@ -55,7 +55,7 @@ make train BATCH_SIZE=64 EPOCHS=50 FLAGS="--data_augmentation"
 
 ## `make fine_tuning` → `src/fine_tuning.py`
 
-Fine-tunes InceptionV3 on the spectrogram dataset. Saves checkpoints to `checkpoints/fine_tuning/<ts>/`.
+Fine-tunes InceptionV3 on the spectrogram dataset. Saves only the best checkpoint to `checkpoints/fine_tuning/<ts>/<ts>_best.pth`. Same plots as `make train`. To inspect the confusion matrix on the test set, run `make eval ... --model inception` afterward.
 
 Required make variables:
 
@@ -107,3 +107,4 @@ GPU detect + CPU/GPU matmul benchmark. No flags, no env vars.
 - Positional args (`BATCH_SIZE`, `EPOCHS`, `CHECKPOINT`) use make env vars because they don't fit the `--flag` style.
 - All scripts accept `--num-workers` (except `health` and `eval`, which use `--max-workers` and `--num-workers` respectively). The spectrogram generator uses `--max-workers` for clarity.
 - Audio is always loaded at `sr=22050` in `src/spectrograms.py` so train and test chunks share dimensions; downstream models expect `130x128` (ConvNet) or `299x299` (InceptionV3 with `--rgb --ft`).
+- The training scripts save only the best checkpoint (by val voting accuracy) and emit accuracy/loss plots. They do not generate a confusion matrix. To inspect the confusion matrix on the held-out test set, run `make eval ...` after training.

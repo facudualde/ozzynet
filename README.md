@@ -50,8 +50,8 @@ Each target forwards extra flags via `FLAGS="..."`. Positional args use make var
 | `make shell`        | Opens a bash session inside the container.                                                                              |
 | `make health`       | Runs `src/health.py` (GPU detect + CPU/GPU matmul benchmark).                                                           |
 | `make spectrograms` | Runs `src/spectrograms.py` to generate mel-spectrogram PNGs.                                                            |
-| `make train`        | Runs `src/train.py` (ConvNet from scratch). Requires `BATCH_SIZE`, `EPOCHS`. Saves to `checkpoints/from_scratch/<ts>/`. Extra flags via `FLAGS="..."` (e.g. `--dataset custom --random_chunks_number 5 --data_augmentation`). |
-| `make fine_tuning`  | Runs `src/fine_tuning.py` (InceptionV3 fine-tuning). Same env vars. Saves to `checkpoints/fine_tuning/<ts>/`. Extra flags via `FLAGS="..."` (e.g. `--dataset custom --random_chunks_number 84 --data_augmentation`). |
+| `make train`        | Runs `src/train.py` (ConvNet from scratch). Requires `BATCH_SIZE`, `EPOCHS`. Saves only the best checkpoint to `checkpoints/from_scratch/<ts>/<ts>_best.pth`; emits `training_curves.png` + `training_curves_loss.png`. Extra flags via `FLAGS="..."` (e.g. `--dataset custom --random_chunks_number 5 --data_augmentation`). Run `make eval ... --model cnn` to inspect the test-set confusion matrix. |
+| `make fine_tuning`  | Runs `src/fine_tuning.py` (InceptionV3 fine-tuning). Same env vars. Saves only the best checkpoint to `checkpoints/fine_tuning/<ts>/<ts>_best.pth`; same plots. Extra flags via `FLAGS="..."` (e.g. `--dataset custom --random_chunks_number 84 --data_augmentation`). Run `make eval ... --model inception` to inspect the test-set confusion matrix. |
 | `make eval`         | Runs `src/eval.py` on a checkpoint. Requires `CHECKPOINT`. `--model` is mandatory (`cnn`/`inception`).                   |
 | `make clean`        | Stops the container; removes `.env`, `.venv/`, `spectrograms/` and Python bytecode caches.                             |
 
