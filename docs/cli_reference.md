@@ -97,6 +97,13 @@ make eval CHECKPOINT=checkpoints/fine_tuning/<ts>/<ts>_best.pth FLAGS="--model i
 make eval CHECKPOINT=checkpoints/from_scratch/<ts>/<ts>_best.pth FLAGS="--model cnn --dataset custom"
 ```
 
+The eval writes `confusion_matrix.png` (song-level, soft-vote) into the checkpoint directory when both conditions hold:
+
+1. The checkpoint lives under `checkpoints/from_scratch/` or `checkpoints/fine_tuning/`, AND
+2. The corresponding test spectrograms directory (`gtzan/test/spectrograms/` or `dataset/test/spectrograms/`) is non-empty.
+
+The text report is always printed regardless of the conditions above.
+
 ## `make health` → `src/health.py`
 
 GPU detect + CPU/GPU matmul benchmark. No flags, no env vars.

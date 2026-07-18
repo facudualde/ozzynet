@@ -7,6 +7,7 @@ Examples
 """
 
 import argparse
+import os
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -16,7 +17,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from cnn import ConvNet, InceptionV3
-from confusion_matrix import print_confusion_matrix_report
+from confusion_matrix import plot_confusion_matrix, print_confusion_matrix_report
 from dataset import Custom, Gtzan
 
 
@@ -65,6 +66,33 @@ def _validate_class_count(model: torch.nn.Module, dataset) -> None:
             file=sys.stderr,
         )
         sys.exit(1)
+
+
+def _resolve_save_dir(checkpoint_path: str) -> str | None:
+    # Place the confusion matrix next to the checkpoint if it lives under
+    # the canonical training layout (checkpoints/from_scratch/ or
+    # checkpoints/fine_tuning/). Returns None for arbitrary paths.
+    ckpt_dir = Path(checkpoint_path).parent
+    if ckpt_dir.parent.name in ("from_scratch", "fine_tuning"):
+        return str(ckpt_dir)
+    return None
+
+
+def _is_test_dir_non_empty(test_root: str) -> bool:
+    # True when the test spectrograms directory has at least one .png anywhere underneath.
+    if not os.path.isdir(test_root):
+        return False
+    for genre in os.listdir(test_root):
+        genre_dir = os.path.join(test_root, genre)
+        if not os.path.isdir(genre_dir):
+            continue
+        for song in os.listdir(genre_dir):
+            song_dir = os.path.join(genre_dir, song)
+            if not os.path.isdir(song_dir):
+                continue
+            if any(f.lower().endswith(".png") for f in os.listdir(song_dir)):
+                return True
+    return False
 
 
 def _infer(
@@ -182,6 +210,15 @@ def main() -> None:
         correct, total, pct = _accuracy_from_cm(cm)
         print(f"\n  Song-level accuracy (soft voting): {correct}/{total} = {pct:.2%}")
         print_confusion_matrix_report(cm, test_ds.GENRES, title="Song-level (soft voting)")
+        # Persist song-level confusion matrix next to the checkpoint when both conditions hold.
+        save_dir = _resolve_save_dir(args.checkpoint)
+        if save_dir is not None and _is_test_dir_non_empty(test_root):
+            cm_path = f"{save_dir}/confusion_matrix.png"
+            plot_confusion_matrix(
+                cm, test_ds.GENRES, save_path=cm_path,
+                title=f"Song-level (soft voting) — {args.dataset} test (model={args.model})",
+            )
+            print(f"  >> Plot saved: {cm_path}")
 
     # Always at song level (one row per misclassified song, deduplicated by song_id).
     _print_misclassified(song_preds, test_ds.GENRES)
