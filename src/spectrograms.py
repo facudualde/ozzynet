@@ -12,9 +12,7 @@ import matplotlib.cm as cm
 import numpy as np
 from PIL import Image
 
-# Two presets: default reads from dataset/songs -> dataset/spectrograms;
-# --gtzan swaps to the canonical gtzan/songs -> gtzan/spectrograms layout.
-# --type test swaps <root>/songs -> <root>/test/songs for held-out eval songs.
+# Presets de directorios
 DATASET_INPUT_DIR = "dataset/songs"
 DATASET_OUTPUT_DIR = "dataset/spectrograms"
 GTZAN_INPUT_DIR = "gtzan/songs"
@@ -24,13 +22,10 @@ DATASET_TEST_OUTPUT_DIR = "dataset/test/spectrograms"
 GTZAN_TEST_INPUT_DIR = "gtzan/test/songs"
 GTZAN_TEST_OUTPUT_DIR = "gtzan/test/spectrograms"
 
-# Canonical GTZAN chunking: 3 seconds per chunk.
 WINDOW_SECONDS = 3.0
 DEFAULT_HOP_SECONDS = 3.0
-# Force sample rate so train and test chunks share dimensions regardless of input.
 SR = 22050
 
-# Mel parameters: see docs in the original one-channel script.
 N_FFT = 2048
 HOP_LENGTH = 512
 N_MELS = 128
@@ -38,27 +33,24 @@ FMIN = 20
 FMAX = 8000
 TOP_DB = 80
 
-# Fine-tuning (InceptionV3) image size.
 FT_IMG_SIZE = 299
-
-# Matplotlib output size for the RGB pipeline (~299x299 at dpi=100).
 IMG_SIZE_INCHES = (2.99, 2.99)
 DPI = 100
-
 MAX_WORKERS = 4
 
 
 @dataclass(frozen=True)
 class JobConfig:
-    # Immutable bundle passed to each worker; avoids wide positional tuples.
     hop_seconds: float
     rgb: bool
     ft: bool
     pitch: bool
+    # === NUEVOS PARÁMETROS ===
+    target_samples: int | None  # Cuántos fragmentos fijos queremos
+    is_gtzan: bool              # Saber si estamos usando GTZAN
 
 
 def mel_db(y: np.ndarray, sr: int) -> np.ndarray:
-    # Single place where the mel spectrogram is computed.
     mel = librosa.feature.melspectrogram(
         y=y,
         sr=sr,
@@ -73,7 +65,6 @@ def mel_db(y: np.ndarray, sr: int) -> np.ndarray:
 
 
 def render_grayscale(mel_db_arr: np.ndarray, target_size: tuple[int, int] | None) -> np.ndarray:
-    # Map dB ([-TOP_DB, 0]) to uint8 ([0, 255]) and invert so energy = bright.
     img = ((mel_db_arr + TOP_DB) / TOP_DB * 255).clip(0, 255).astype(np.uint8)
     img = 255 - img
     if target_size is not None:
@@ -82,10 +73,8 @@ def render_grayscale(mel_db_arr: np.ndarray, target_size: tuple[int, int] | None
 
 
 def render_rgb(mel_db_arr: np.ndarray, target_size: tuple[int, int]) -> np.ndarray:
-    # Map dB to [0, 1] and apply viridis directly — avoids the matplotlib
-    # round-trip to a PNG file, which broke inside ProcessPoolExecutor workers.
     normalized = ((mel_db_arr + TOP_DB) / TOP_DB).clip(0, 1)
-    rgba = cm.viridis(normalized)  # (H, W, 4) float in [0, 1]
+    rgba = cm.viridis(normalized)
     rgb = (rgba[..., :3] * 255).clip(0, 255).astype(np.uint8)
     if target_size is not None:
         rgb = np.array(Image.fromarray(rgb, mode="RGB").resize(target_size, Image.BILINEAR))
@@ -98,7 +87,6 @@ def save_spectrogram(
     output_path: str,
     cfg: JobConfig,
 ) -> None:
-    # Compute mel once; pick the renderer + size based on flags.
     mel_db_arr = mel_db(y, sr)
     target_size = (FT_IMG_SIZE, FT_IMG_SIZE) if cfg.ft else None
     if cfg.rgb:
@@ -110,7 +98,6 @@ def save_spectrogram(
 
 
 def pitch_variants(y_full: np.ndarray, sr: int, cfg: JobConfig) -> dict[str, np.ndarray]:
-    # Only --pitch produces the extra pitch-shifted copies.
     if not cfg.pitch:
         return {"original": y_full}
     return {
@@ -121,7 +108,6 @@ def pitch_variants(y_full: np.ndarray, sr: int, cfg: JobConfig) -> dict[str, np.
 
 
 def clean_song_dir(song_output_dir: str) -> None:
-    # Wipe any leftover PNGs so re-runs don't mix old + new naming schemes.
     if not os.path.isdir(song_output_dir):
         return
     for entry in os.listdir(song_output_dir):
@@ -133,7 +119,6 @@ def clean_song_dir(song_output_dir: str) -> None:
 
 
 def process_song(args: tuple[str, str, JobConfig]) -> tuple[str, str | None]:
-    # Unpack worker args; JobConfig carries the per-run flags.
     song_path, song_output_dir, cfg = args
 
     try:
@@ -144,30 +129,57 @@ def process_song(args: tuple[str, str, JobConfig]) -> tuple[str, str | None]:
 
     sr = int(sr)
     samples_per_window = int(WINDOW_SECONDS * sr)
-    samples_per_hop = int(cfg.hop_seconds * sr)
+    total_samples = len(y_full)
+
+    if total_samples < samples_per_window:
+        print(f"[WARN] song too short {song_path}")
+        return song_path, None
 
     clean_song_dir(song_output_dir)
     os.makedirs(song_output_dir, exist_ok=True)
 
-    # Walk the song until a full 3-second window no longer fits.
-    segment_idx = 0
-    start = 0
-    while start + samples_per_window <= len(y_full):
-        end = start + samples_per_window
-        for suffix, y_audio in pitch_variants(y_full[start:end], sr, cfg).items():
-            output_path = os.path.join(
-                song_output_dir,
-                f"{segment_idx}_{suffix}.png" if cfg.pitch else f"{segment_idx}.png",
-            )
-            save_spectrogram(y_audio, sr, output_path, cfg)
-        start += samples_per_hop
-        segment_idx += 1
+    # === LÓGICA DE PARTICIÓN ADAPTATIVA VS TRADICIONAL ===
+    if not cfg.is_gtzan and cfg.target_samples is not None:
+        # Modo adaptativo puro para tu nuevo dataset personalizado
+        available_space = total_samples - samples_per_window
+        samples_per_hop = available_space / (cfg.target_samples - 1) if available_space > 0 else 0
+
+        for step in range(cfg.target_samples):
+            start_sample = int(round(step * samples_per_hop))
+            end_sample = start_sample + samples_per_window
+
+            if end_sample > total_samples:
+                end_sample = total_samples
+                start_sample = end_sample - samples_per_window
+
+            y_segment = y_full[start_sample:end_sample]
+            for suffix, y_audio in pitch_variants(y_segment, sr, cfg).items():
+                output_path = os.path.join(
+                    song_output_dir,
+                    f"{step}_{suffix}.png" if cfg.pitch else f"{step}.png",
+                )
+                save_spectrogram(y_audio, sr, output_path, cfg)
+    else:
+        # Modo tradicional secuencial (Siempre usado en GTZAN o si omitís --samples)
+        samples_per_hop = int(cfg.hop_seconds * sr)
+        segment_idx = 0
+        start = 0
+        while start + samples_per_window <= total_samples:
+            end = start + samples_per_window
+            y_segment = y_full[start:end]
+            for suffix, y_audio in pitch_variants(y_segment, sr, cfg).items():
+                output_path = os.path.join(
+                    song_output_dir,
+                    f"{segment_idx}_{suffix}.png" if cfg.pitch else f"{segment_idx}.png",
+                )
+                save_spectrogram(y_audio, sr, output_path, cfg)
+            start += samples_per_hop
+            segment_idx += 1
 
     return song_path, song_output_dir
 
 
 def _paths(type_: str, gtzan: bool) -> tuple[str, str]:
-    # Resolve (input_dir, output_dir) from the --type/--gtzan combination.
     if type_ == "test":
         return (GTZAN_TEST_INPUT_DIR, GTZAN_TEST_OUTPUT_DIR) if gtzan else (DATASET_TEST_INPUT_DIR, DATASET_TEST_OUTPUT_DIR)
     return (GTZAN_INPUT_DIR, GTZAN_OUTPUT_DIR) if gtzan else (DATASET_INPUT_DIR, DATASET_OUTPUT_DIR)
@@ -182,7 +194,14 @@ def parse_args() -> argparse.Namespace:
         "--hop",
         type=float,
         default=DEFAULT_HOP_SECONDS,
-        help="Stride seconds (default 3.0). Range (0, 3.0].",
+        help="Stride seconds (default 3.0). Range (0, 3.0]. Ignored if not using --gtzan and --samples is specified.",
+    )
+    # === ARGUMENTO NUEVO ===
+    parser.add_argument(
+        "--samples",
+        type=int,
+        default=100,
+        help="Target number of pure samples per song using adaptive hop (Ignored if --gtzan is active).",
     )
     parser.add_argument(
         "--type",
@@ -197,28 +216,39 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--max-workers", type=int, default=MAX_WORKERS, help="Parallel worker count.")
     args = parser.parse_args()
+    
     if not 0 < args.hop <= WINDOW_SECONDS:
         parser.error(f"--hop must be in (0, {WINDOW_SECONDS}]")
+    if args.samples <= 0:
+        parser.error("--samples must be a positive integer greater than 0")
+        
     return args
 
 
 def main() -> None:
     args = parse_args()
 
-    # --pitch is meaningless on held-out test songs; warn and force-disable instead of erroring out.
     pitch_effective = args.pitch and args.type == "train"
     if args.pitch and args.type == "test":
         print("[WARN] --pitch is ignored with --type test (no augmentation on test songs)")
 
+    # Imprimir advertencia si el usuario intenta combinar --hop y --samples de forma inválida
+    if not args.gtzan and args.hop != DEFAULT_HOP_SECONDS:
+        print(f"[WARN] --hop={args.hop}s is ignored because custom dataset mode is active. "
+              f"Using adaptive calculation to get exactly {args.samples} samples.")
+
     input_dir, output_dir = _paths(args.type, args.gtzan)
+    
     cfg = JobConfig(
         hop_seconds=args.hop,
         rgb=args.rgb,
         ft=args.ft,
         pitch=pitch_effective,
+        target_samples=args.samples,
+        is_gtzan=args.gtzan,
     )
 
-    try:  # mirror the old script's "best-effort chown" for Docker volumes
+    try:  
         if os.path.exists(output_dir):
             os.system(f"chown -R $(id -u):$(id -g) {output_dir} 2>/dev/null")
     except Exception:
@@ -227,6 +257,11 @@ def main() -> None:
     os.makedirs(output_dir, exist_ok=True)
 
     work_items: list[tuple[str, str, JobConfig]] = []
+    
+    if not os.path.exists(input_dir):
+        print(f"[Error] Source directory '{input_dir}' does not exist.")
+        return
+
     for genre in sorted(os.listdir(input_dir)):
         genre_input_dir = os.path.join(input_dir, genre)
         if not os.path.isdir(genre_input_dir):
@@ -236,7 +271,7 @@ def main() -> None:
         os.makedirs(genre_output_dir, exist_ok=True)
 
         for song_file in sorted(os.listdir(genre_input_dir)):
-            if not (song_file.endswith(".wav") or song_file.endswith(".mp3")):
+            if not (song_file.lower().endswith(".wav") or song_file.lower().endswith(".mp3")):
                 continue
 
             song_path = os.path.join(genre_input_dir, song_file)
@@ -249,9 +284,16 @@ def main() -> None:
     mode = "RGB" if cfg.rgb else "L"
     size = f"{FT_IMG_SIZE}x{FT_IMG_SIZE}" if cfg.ft else "native"
     preset = "gtzan" if args.gtzan else "dataset"
+    
+    # Ajustar el mensaje de inicio en la terminal según el método elegido
+    if args.gtzan:
+        strategy_str = f"hop={cfg.hop_seconds}s"
+    else:
+        strategy_str = f"adaptive target={cfg.target_samples} segments"
+
     print(
         f"Processing {len(work_items)} songs ({preset}/{args.type}) with {args.max_workers} workers "
-        f"({mode} {size}, pitch={'on' if cfg.pitch else 'off'}, hop={cfg.hop_seconds}s)..."
+        f"({mode} {size}, pitch={'on' if cfg.pitch else 'off'}, {strategy_str})..."
     )
 
     with ProcessPoolExecutor(max_workers=args.max_workers) as executor:
