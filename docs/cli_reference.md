@@ -17,6 +17,7 @@ Force `sr=22050` so train and test chunks share dimensions regardless of input s
 | `--ft` | off | Resize output to `299x299`. |
 | `--pitch` | off | Pitch augmentation (+/-1 semitone). Does NOT affect hop. |
 | `--hop <float>` | `3.0` | Stride in seconds. Range `(0, 3.0]`. Independent from `--pitch`. |
+| `--samples <int>` | `100` | Target number of spectrograms per song for Custom datasets. The hop is computed per song so chunks are evenly distributed. Truncated to song length when songs are too short. Ignored for `--gtzan` (uses traditional hop-based stride). |
 | `--type {train, test}` | `train` | `train` reads `<root>/songs`, `test` reads `<root>/test/songs`. `--pitch` is auto-disabled under `--type test` (with a warning). |
 | `--max-workers <int>` | `4` | Parallel worker processes. |
 
