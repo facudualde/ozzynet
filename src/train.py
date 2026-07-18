@@ -224,7 +224,7 @@ def main() -> None:
         persistent_workers=args.num_workers > 0,
     )
 
-    model = ConvNet().to(DEVICE)
+    model = ConvNet(num_classes=len(train_ds.GENRES)).to(DEVICE)
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 

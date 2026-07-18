@@ -1,0 +1,5 @@
+validation accuracy aprox 83%
+
+make spectrograms FLAGS=" --ft --samples 100 --type train --max-workers 8 --rgb"
+make spectrograms FLAGS=" --ft --samples 100 --type test --max-workers 8 --rgb"
+make fine_tuning FLAGS="--dataset custom --random_chunks_number 30"

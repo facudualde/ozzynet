@@ -230,7 +230,7 @@ def main() -> None:
         persistent_workers=args.num_workers > 0,
     )
 
-    model = InceptionV3().to(DEVICE)
+    model = InceptionV3(num_classes=len(train_ds.GENRES)).to(DEVICE)
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.AdamW(model.trainable_parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
