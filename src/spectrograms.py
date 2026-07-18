@@ -45,9 +45,9 @@ class JobConfig:
     rgb: bool
     ft: bool
     pitch: bool
-    # Adaptive sampling parameters.
-    target_samples: int | None  # Target chunks per song; None disables adaptive mode.
-    is_gtzan: bool              # True forces traditional hop-based stride for GTZAN.
+    # === NUEVOS PARÁMETROS ===
+    target_samples: int | None  # Cuántos fragmentos fijos queremos
+    is_gtzan: bool              # Saber si estamos usando GTZAN
 
 
 def mel_db(y: np.ndarray, sr: int) -> np.ndarray:
@@ -138,18 +138,20 @@ def process_song(args: tuple[str, str, JobConfig]) -> tuple[str, str | None]:
     clean_song_dir(song_output_dir)
     os.makedirs(song_output_dir, exist_ok=True)
 
-    # Adaptive vs traditional partitioning.
+    # === LÓGICA DE PARTICIÓN ADAPTATIVA VS TRADICIONAL ===
     if not cfg.is_gtzan and cfg.target_samples is not None:
-        # Adaptive mode for Custom datasets — distribute samples evenly across the song.
-        max_possible = max(0, (total_samples - samples_per_window) // samples_per_window + 1)
-        effective = min(cfg.target_samples, max_possible) if max_possible > 0 else 0
-        if effective == 0:
-            print(f"[WARN] song too short for adaptive sampling {song_path}")
-            return song_path, None
-        starts = np.linspace(0, total_samples - samples_per_window, effective, dtype=int)
+        # Modo adaptativo puro para tu nuevo dataset personalizado
+        available_space = total_samples - samples_per_window
+        samples_per_hop = available_space / (cfg.target_samples - 1) if available_space > 0 else 0
 
-        for step, start_sample in enumerate(starts):
+        for step in range(cfg.target_samples):
+            start_sample = int(round(step * samples_per_hop))
             end_sample = start_sample + samples_per_window
+
+            if end_sample > total_samples:
+                end_sample = total_samples
+                start_sample = end_sample - samples_per_window
+
             y_segment = y_full[start_sample:end_sample]
             for suffix, y_audio in pitch_variants(y_segment, sr, cfg).items():
                 output_path = os.path.join(
@@ -158,7 +160,7 @@ def process_song(args: tuple[str, str, JobConfig]) -> tuple[str, str | None]:
                 )
                 save_spectrogram(y_audio, sr, output_path, cfg)
     else:
-        # Traditional sequential mode (GTZAN default, or when --samples is omitted).
+        # Modo tradicional secuencial (Siempre usado en GTZAN o si omitís --samples)
         samples_per_hop = int(cfg.hop_seconds * sr)
         segment_idx = 0
         start = 0
@@ -194,12 +196,12 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_HOP_SECONDS,
         help="Stride seconds (default 3.0). Range (0, 3.0]. Ignored if not using --gtzan and --samples is specified.",
     )
-    # New argument.
+    # === ARGUMENTO NUEVO ===
     parser.add_argument(
         "--samples",
         type=int,
         default=100,
-        help="Target chunks per song via adaptive hop (ignored with --gtzan). Truncated to song length if needed.",
+        help="Target number of pure samples per song using adaptive hop (Ignored if --gtzan is active).",
     )
     parser.add_argument(
         "--type",
@@ -230,7 +232,7 @@ def main() -> None:
     if args.pitch and args.type == "test":
         print("[WARN] --pitch is ignored with --type test (no augmentation on test songs)")
 
-    # Warn if --hop is provided alongside non-GTZAN: it is ignored.
+    # Imprimir advertencia si el usuario intenta combinar --hop y --samples de forma inválida
     if not args.gtzan and args.hop != DEFAULT_HOP_SECONDS:
         print(f"[WARN] --hop={args.hop}s is ignored because custom dataset mode is active. "
               f"Using adaptive calculation to get exactly {args.samples} samples.")
@@ -283,7 +285,7 @@ def main() -> None:
     size = f"{FT_IMG_SIZE}x{FT_IMG_SIZE}" if cfg.ft else "native"
     preset = "gtzan" if args.gtzan else "dataset"
     
-    # Pick the stride description for the banner based on mode.
+    # Ajustar el mensaje de inicio en la terminal según el método elegido
     if args.gtzan:
         strategy_str = f"hop={cfg.hop_seconds}s"
     else:

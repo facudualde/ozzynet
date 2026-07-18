@@ -24,19 +24,52 @@ def _build_pipeline(model: str, data_augmentation: bool) -> _Pipeline:
     # Default transforms depend on which backbone is being trained.
     if model == "inception":
         w = Inception_V3_Weights.DEFAULT.transforms()
-        aug = [transforms.RandomHorizontalFlip(), transforms.RandomAffine(degrees=(-5, 5), translate=(0.05, 0.05))]
-        return _Pipeline(image_mode="RGB", image_size=(299, 299), normalize_mean=list(w.mean), normalize_std=list(w.std), augmentation_train=aug if data_augmentation else [])
+        
+        # Usamos RandomErasing configurado para simular barras verticales (tiempo) y horizontales (frecuencia)
+        # scale controla el tamaño del bloque, ratio=(X, Y) controla qué tan estirado es el rectángulo
+        aug = [
+            # Máscara de tiempo (rectángulo vertical alto y angosto)
+            transforms.RandomErasing(p=0.4, scale=(0.02, 0.08), ratio=(0.1, 0.3), value=0),
+            # Máscara de frecuencia (rectángulo horizontal largo y petiso)
+            transforms.RandomErasing(p=0.4, scale=(0.02, 0.08), ratio=(3.3, 10.0), value=0)
+        ]
+        
+        return _Pipeline(
+            image_mode="RGB", 
+            image_size=(299, 299), 
+            normalize_mean=list(w.mean), 
+            normalize_std=list(w.std), 
+            augmentation_train=aug if data_augmentation else []
+        )
+        
     if model == "cnn":
-        aug = [torchaudio.transforms.FrequencyMasking(freq_mask_param=12), torchaudio.transforms.TimeMasking(time_mask_param=20)]
-        return _Pipeline(image_mode="L", image_size=(130, 128), normalize_mean=[0.5], normalize_std=[0.5], augmentation_train=aug if data_augmentation else [])
+        aug = [
+            torchaudio.transforms.FrequencyMasking(freq_mask_param=12), 
+            torchaudio.transforms.TimeMasking(time_mask_param=20)
+        ]
+        return _Pipeline(
+            image_mode="L", 
+            image_size=(130, 128), 
+            normalize_mean=[0.5], 
+            normalize_std=[0.5], 
+            augmentation_train=aug if data_augmentation else []
+        )
     raise ValueError(f"model must be 'inception' or 'cnn', got {model!r}")
 
 
 def _build_transforms(pipeline: _Pipeline, split: str, data_augmentation: bool) -> transforms.Compose:
     # Resize first so SpecAugment/affine operate on the target shape.
-    ops: list = [transforms.Resize(pipeline.image_size), transforms.ToImage(), transforms.ToDtype(torch.float32, scale=True)]
+    ops: list = [
+        transforms.Resize(pipeline.image_size), 
+        transforms.ToImage(), 
+        transforms.ToDtype(torch.float32, scale=True)
+    ]
+    
+    # IMPORTANTE: Para la CNN las transformaciones de torchaudio se inyectan acá,
+    # pero para Inception, RandomErasing exige correr DESPUÉS de ToDtype porque trabaja sobre tensores.
     if split == "train" and data_augmentation:
         ops.extend(pipeline.augmentation_train)
+        
     ops.append(transforms.Normalize(mean=pipeline.normalize_mean, std=pipeline.normalize_std))
     return transforms.Compose(ops)
 
