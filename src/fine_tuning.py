@@ -9,11 +9,6 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from cnn import InceptionV3
-from confusion_matrix import (
-    compute_confusion_matrix_songs,
-    plot_confusion_matrix,
-    print_confusion_matrix_report,
-)
 from dataset import Custom, Gtzan
 from plot_utils import plot_history, plot_loss_history
 
@@ -96,23 +91,6 @@ def validate(
     return voting_acc, chunk_acc, chunk_loss / max(chunk_total, 1)
 
 
-def final_evaluation(
-    model: nn.Module,
-    val_dataset: torch.utils.data.Dataset,
-    batch_size: int,
-    genres: list[str],
-    save_dir: str,
-) -> None:
-    # Build the song-level confusion matrix, save a plot, and print a textual report.
-    cm = compute_confusion_matrix_songs(model, val_dataset, batch_size, DEVICE)
-    plot_confusion_matrix(
-        cm, genres,
-        save_path=f"{save_dir}/confusion_matrix.png",
-        title="Song-level (soft voting)",
-    )
-    print_confusion_matrix_report(cm, genres, title="Song-level (soft voting)")
-
-
 def loop(
     train_loader: DataLoader,
     val_loader: DataLoader,
@@ -122,8 +100,8 @@ def loop(
     epochs: int,
     save_dir: str,
     dataset_name: str,
-) -> tuple[str, str, dict]:
-    # Train for `epochs`; track and save both the latest and best-by-voting-acc checkpoints.
+) -> tuple[str, dict]:
+    # Train for `epochs`; track history and save only the best-by-voting-acc checkpoint.
     print("=" * 60)
     print(f"  Training InceptionV3 on {dataset_name} with soft-vote validation")
     print(f"  Device:  {DEVICE}")
@@ -136,7 +114,6 @@ def loop(
     print("=" * 60)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    latest_path = f"{save_dir}/{timestamp}_latest.pth"
     best_path = f"{save_dir}/{timestamp}_best.pth"
     best_acc = -1.0
     history = {
@@ -170,7 +147,6 @@ def loop(
             f"  epoch {epoch} time: {format_duration(time.perf_counter() - epoch_start)}"
         )
 
-        torch.save(model.state_dict(), latest_path)
         if voting_acc > best_acc:
             best_acc = voting_acc
             torch.save(model.state_dict(), best_path)
@@ -179,9 +155,8 @@ def loop(
     print("\n" + "=" * 60)
     print(f"  Done!  Total time: {format_duration(total_time)}")
     print(f"  Best voting acc: {best_acc:.1f}%  -> {best_path}")
-    print(f"  Latest:          {latest_path}")
     print("=" * 60)
-    return latest_path, best_path, history
+    return best_path, history
 
 
 def parse_args() -> argparse.Namespace:
@@ -239,11 +214,10 @@ def main() -> None:
     import os
     os.makedirs(save_dir, exist_ok=True)
 
-    _, _, history = loop(train_loader, val_loader, model, criterion, optimizer, args.epochs, save_dir, args.dataset)
-    final_evaluation(model, val_ds, args.batch_size, val_ds.GENRES, save_dir)
+    _, history = loop(train_loader, val_loader, model, criterion, optimizer, args.epochs, save_dir, args.dataset)
     plot_history(history, save_dir, "InceptionV3")
     plot_loss_history(history, save_dir, "InceptionV3")
-    print(f"Model + report saved under: {save_dir}")
+    print(f"Best model saved under: {save_dir}")
 
 
 if __name__ == "__main__":
