@@ -7,12 +7,11 @@ from dataclasses import dataclass
 import librosa
 import matplotlib
 
-matplotlib.use("Agg")  # no display; safe inside containers
+matplotlib.use("Agg")
 import matplotlib.cm as cm
 import numpy as np
 from PIL import Image
 
-# Presets de directorios
 DATASET_INPUT_DIR = "dataset/songs"
 DATASET_OUTPUT_DIR = "dataset/spectrograms"
 GTZAN_INPUT_DIR = "gtzan/songs"
@@ -45,9 +44,8 @@ class JobConfig:
     rgb: bool
     ft: bool
     pitch: bool
-    # === NUEVOS PARÁMETROS ===
-    target_samples: int | None  # Cuántos fragmentos fijos queremos
-    is_gtzan: bool              # Saber si estamos usando GTZAN
+    target_samples: int | None
+    is_gtzan: bool
 
 
 def mel_db(y: np.ndarray, sr: int) -> np.ndarray:
@@ -138,9 +136,7 @@ def process_song(args: tuple[str, str, JobConfig]) -> tuple[str, str | None]:
     clean_song_dir(song_output_dir)
     os.makedirs(song_output_dir, exist_ok=True)
 
-    # === LÓGICA DE PARTICIÓN ADAPTATIVA VS TRADICIONAL ===
     if not cfg.is_gtzan and cfg.target_samples is not None:
-        # Modo adaptativo puro para tu nuevo dataset personalizado
         available_space = total_samples - samples_per_window
         samples_per_hop = available_space / (cfg.target_samples - 1) if available_space > 0 else 0
 
@@ -160,7 +156,6 @@ def process_song(args: tuple[str, str, JobConfig]) -> tuple[str, str | None]:
                 )
                 save_spectrogram(y_audio, sr, output_path, cfg)
     else:
-        # Modo tradicional secuencial (Siempre usado en GTZAN o si omitís --samples)
         samples_per_hop = int(cfg.hop_seconds * sr)
         segment_idx = 0
         start = 0
@@ -196,7 +191,6 @@ def parse_args() -> argparse.Namespace:
         default=DEFAULT_HOP_SECONDS,
         help="Stride seconds (default 3.0). Range (0, 3.0]. Ignored if not using --gtzan and --samples is specified.",
     )
-    # === ARGUMENTO NUEVO ===
     parser.add_argument(
         "--samples",
         type=int,
@@ -216,12 +210,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--max-workers", type=int, default=MAX_WORKERS, help="Parallel worker count.")
     args = parser.parse_args()
-    
+
     if not 0 < args.hop <= WINDOW_SECONDS:
         parser.error(f"--hop must be in (0, {WINDOW_SECONDS}]")
     if args.samples <= 0:
         parser.error("--samples must be a positive integer greater than 0")
-        
+
     return args
 
 
@@ -232,13 +226,12 @@ def main() -> None:
     if args.pitch and args.type == "test":
         print("[WARN] --pitch is ignored with --type test (no augmentation on test songs)")
 
-    # Imprimir advertencia si el usuario intenta combinar --hop y --samples de forma inválida
     if not args.gtzan and args.hop != DEFAULT_HOP_SECONDS:
         print(f"[WARN] --hop={args.hop}s is ignored because custom dataset mode is active. "
               f"Using adaptive calculation to get exactly {args.samples} samples.")
 
     input_dir, output_dir = _paths(args.type, args.gtzan)
-    
+
     cfg = JobConfig(
         hop_seconds=args.hop,
         rgb=args.rgb,
@@ -248,7 +241,7 @@ def main() -> None:
         is_gtzan=args.gtzan,
     )
 
-    try:  
+    try:
         if os.path.exists(output_dir):
             os.system(f"chown -R $(id -u):$(id -g) {output_dir} 2>/dev/null")
     except Exception:
@@ -257,7 +250,7 @@ def main() -> None:
     os.makedirs(output_dir, exist_ok=True)
 
     work_items: list[tuple[str, str, JobConfig]] = []
-    
+
     if not os.path.exists(input_dir):
         print(f"[Error] Source directory '{input_dir}' does not exist.")
         return
@@ -284,8 +277,7 @@ def main() -> None:
     mode = "RGB" if cfg.rgb else "L"
     size = f"{FT_IMG_SIZE}x{FT_IMG_SIZE}" if cfg.ft else "native"
     preset = "gtzan" if args.gtzan else "dataset"
-    
-    # Ajustar el mensaje de inicio en la terminal según el método elegido
+
     if args.gtzan:
         strategy_str = f"hop={cfg.hop_seconds}s"
     else:

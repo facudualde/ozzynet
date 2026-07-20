@@ -1,11 +1,3 @@
-"""Evaluate a trained checkpoint on the held-out test spectrograms.
-
-Examples
---------
-    make eval CHECKPOINT=checkpoints/from_scratch/<ts>/<ts>_best.pth FLAGS="--model cnn"
-    make eval CHECKPOINT=checkpoints/fine_tuning/<ts>/<ts>_best.pth FLAGS="--model inception"
-"""
-
 import argparse
 import os
 import sys
@@ -22,7 +14,6 @@ from dataset import Custom, Gtzan
 
 
 def load_model(checkpoint_path: str, device: torch.device, model_kind: str) -> torch.nn.Module:
-    # Peek at the state_dict to learn the classifier head size, then build the architecture.
     state_dict = torch.load(checkpoint_path, map_location=device, weights_only=True)
     if model_kind == "cnn":
         num_classes = state_dict["fc2.weight"].shape[0]
@@ -35,7 +26,6 @@ def load_model(checkpoint_path: str, device: torch.device, model_kind: str) -> t
 
 
 def _accuracy_from_cm(cm) -> tuple[int, int, float]:
-    # Pull overall accuracy out of a sklearn-style confusion matrix.
     total = int(cm.sum())
     correct = int(np.diag(cm).sum())
     pct = correct / total if total else 0.0
@@ -43,10 +33,9 @@ def _accuracy_from_cm(cm) -> tuple[int, int, float]:
 
 
 def _classifier_out_features(model: torch.nn.Module) -> int | None:
-    # Reach into the classifier head to read its final-layer width.
-    if hasattr(model, "fc2"):  # ConvNet
+    if hasattr(model, "fc2"):
         return model.fc2.out_features
-    if hasattr(model, "backbone") and hasattr(model.backbone, "fc"):  # InceptionV3
+    if hasattr(model, "backbone") and hasattr(model.backbone, "fc"):
         last = model.backbone.fc[-1]
         if hasattr(last, "out_features"):
             return last.out_features
@@ -54,7 +43,6 @@ def _classifier_out_features(model: torch.nn.Module) -> int | None:
 
 
 def _validate_class_count(model: torch.nn.Module, dataset) -> None:
-    # Fail loud if the checkpoint's classifier head size doesn't match the dataset.
     out_features = _classifier_out_features(model)
     if out_features is None:
         return
@@ -69,9 +57,6 @@ def _validate_class_count(model: torch.nn.Module, dataset) -> None:
 
 
 def _resolve_save_dir(checkpoint_path: str) -> str | None:
-    # Place the confusion matrix next to the checkpoint if it lives under
-    # the canonical training layout (checkpoints/from_scratch/ or
-    # checkpoints/fine_tuning/). Returns None for arbitrary paths.
     ckpt_dir = Path(checkpoint_path).parent
     if ckpt_dir.parent.name in ("from_scratch", "fine_tuning"):
         return str(ckpt_dir)
@@ -79,7 +64,6 @@ def _resolve_save_dir(checkpoint_path: str) -> str | None:
 
 
 def _is_test_dir_non_empty(test_root: str) -> bool:
-    # True when the test spectrograms directory has at least one .png anywhere underneath.
     if not os.path.isdir(test_root):
         return False
     for genre in os.listdir(test_root):
@@ -98,7 +82,6 @@ def _is_test_dir_non_empty(test_root: str) -> bool:
 def _infer(
     model: torch.nn.Module, dataset, batch_size: int, device: torch.device,
 ) -> tuple[list[tuple[str, int, int]], dict[str, tuple[int, int]]]:
-    # Single inference pass yields both chunk-level records and song-level soft-vote predictions.
     records: list[tuple[str, int, int]] = []
     song_probs: dict[str, torch.Tensor] = {}
     song_true: dict[str, int] = {}
@@ -119,7 +102,6 @@ def _infer(
 
 
 def _print_misclassified(song_preds: dict[str, tuple[int, int]], genres: list[str]) -> None:
-    # One row per misclassified song (deduplicated by song_id), grouped by (true -> pred).
     label_to_genre = {i: g for i, g in enumerate(genres)}
     wrong = [(sid, t, p) for sid, (t, p) in song_preds.items() if t != p]
     if not wrong:
@@ -136,7 +118,6 @@ def _print_misclassified(song_preds: dict[str, tuple[int, int]], genres: list[st
 
 
 def _chunk_cm_from_records(records: list[tuple[str, int, int]], num_classes: int) -> np.ndarray:
-    # Build a chunk-level confusion matrix directly from records (sklearn-compatible).
     cm = np.zeros((num_classes, num_classes), dtype=np.int64)
     for _, true, pred in records:
         cm[true, pred] += 1
@@ -146,7 +127,6 @@ def _chunk_cm_from_records(records: list[tuple[str, int, int]], num_classes: int
 def _song_cm_from_song_preds(
     song_preds: dict[str, tuple[int, int]], num_classes: int,
 ) -> np.ndarray:
-    # Build a song-level confusion matrix from {sid: (true, pred)}.
     cm = np.zeros((num_classes, num_classes), dtype=np.int64)
     for true, pred in song_preds.values():
         cm[true, pred] += 1
@@ -196,7 +176,6 @@ def main() -> None:
     print(f"  Genres     : {test_ds.GENRES}")
     print("=" * 60)
 
-    # One inference pass feeds chunk cm, song cm, and the misclassified listing.
     records, song_preds = _infer(model, test_ds, args.batch_size, device)
 
     if args.mode in ("chunk", "both"):
@@ -210,7 +189,6 @@ def main() -> None:
         correct, total, pct = _accuracy_from_cm(cm)
         print(f"\n  Song-level accuracy (soft voting): {correct}/{total} = {pct:.2%}")
         print_confusion_matrix_report(cm, test_ds.GENRES, title="Song-level (soft voting)")
-        # Persist song-level confusion matrix next to the checkpoint when both conditions hold.
         save_dir = _resolve_save_dir(args.checkpoint)
         if save_dir is not None and _is_test_dir_non_empty(test_root):
             cm_path = f"{save_dir}/confusion_matrix.png"
@@ -220,7 +198,6 @@ def main() -> None:
             )
             print(f"  >> Plot saved: {cm_path}")
 
-    # Always at song level (one row per misclassified song, deduplicated by song_id).
     _print_misclassified(song_preds, test_ds.GENRES)
 
     print("\n" + "=" * 60)

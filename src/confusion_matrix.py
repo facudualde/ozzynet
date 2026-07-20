@@ -12,7 +12,6 @@ def compute_confusion_matrix(model, loader, device, num_classes=10):
   y_true, y_pred = [], []
   with torch.no_grad():
     for batch in loader:
-      # Loader may yield (X, y) or (X, y, song_id) — be tolerant.
       X, y = batch[0], batch[1]
       X = X.to(device)
       logits = model(X)
@@ -24,7 +23,6 @@ def compute_confusion_matrix(model, loader, device, num_classes=10):
 def compute_confusion_matrix_songs(
   model, val_dataset, batch_size, device, num_classes=10,
 ):
-  # Same song-level collate as train.py:validate_songs.
   def collate(batch):
     imgs, labels, sids = zip(*batch)
     return torch.stack(imgs), torch.tensor(labels), list(sids)
@@ -53,26 +51,6 @@ def compute_confusion_matrix_songs(
 
 
 def print_confusion_matrix_report(cm, class_names, title=""):
-  """Pretty-print a confusion matrix report.
-
-  Parameters
-  ----------
-  cm : array-like of shape (num_classes, num_classes)
-      Output of `compute_confusion_matrix` or
-      `compute_confusion_matrix_songs`.
-  class_names : list[str]
-      Names for the rows and columns (e.g. DatasetFT.GENRES).
-  title : str, optional
-      Header shown at the top of the report.
-
-  Output
-  ------
-  Prints to stdout:
-    - Overall accuracy + total sample count.
-    - Per-class recall with a 20-char bar chart.
-    - Raw confusion matrix with row and column labels.
-    - Top 5 most confused pairs (true → predicted).
-  """
   cm = np.asarray(cm)
   n = len(class_names)
   total = int(cm.sum())

@@ -12,7 +12,6 @@ from torchvision.models import Inception_V3_Weights
 
 @dataclass(frozen=True)
 class _Pipeline:
-    # Bundle of knobs that travel together through __getitem__.
     image_mode: Literal["L", "RGB"]
     image_size: int | tuple[int, int]
     normalize_mean: list[float]
@@ -21,61 +20,52 @@ class _Pipeline:
 
 
 def _build_pipeline(model: str, data_augmentation: bool) -> _Pipeline:
-    # Default transforms depend on which backbone is being trained.
     if model == "inception":
         w = Inception_V3_Weights.DEFAULT.transforms()
-        
-        # Usamos RandomErasing configurado para simular barras verticales (tiempo) y horizontales (frecuencia)
-        # scale controla el tamaño del bloque, ratio=(X, Y) controla qué tan estirado es el rectángulo
+
         aug = [
-            # Máscara de tiempo (rectángulo vertical alto y angosto)
             transforms.RandomErasing(p=0.4, scale=(0.02, 0.08), ratio=(0.1, 0.3), value=0),
-            # Máscara de frecuencia (rectángulo horizontal largo y petiso)
             transforms.RandomErasing(p=0.4, scale=(0.02, 0.08), ratio=(3.3, 10.0), value=0)
         ]
-        
+
         return _Pipeline(
-            image_mode="RGB", 
-            image_size=(299, 299), 
-            normalize_mean=list(w.mean), 
-            normalize_std=list(w.std), 
+            image_mode="RGB",
+            image_size=(299, 299),
+            normalize_mean=list(w.mean),
+            normalize_std=list(w.std),
             augmentation_train=aug if data_augmentation else []
         )
-        
+
     if model == "cnn":
         aug = [
-            torchaudio.transforms.FrequencyMasking(freq_mask_param=12), 
+            torchaudio.transforms.FrequencyMasking(freq_mask_param=12),
             torchaudio.transforms.TimeMasking(time_mask_param=20)
         ]
         return _Pipeline(
-            image_mode="L", 
-            image_size=(130, 128), 
-            normalize_mean=[0.5], 
-            normalize_std=[0.5], 
+            image_mode="L",
+            image_size=(130, 128),
+            normalize_mean=[0.5],
+            normalize_std=[0.5],
             augmentation_train=aug if data_augmentation else []
         )
     raise ValueError(f"model must be 'inception' or 'cnn', got {model!r}")
 
 
 def _build_transforms(pipeline: _Pipeline, split: str, data_augmentation: bool) -> transforms.Compose:
-    # Resize first so SpecAugment/affine operate on the target shape.
     ops: list = [
-        transforms.Resize(pipeline.image_size), 
-        transforms.ToImage(), 
+        transforms.Resize(pipeline.image_size),
+        transforms.ToImage(),
         transforms.ToDtype(torch.float32, scale=True)
     ]
-    
-    # IMPORTANTE: Para la CNN las transformaciones de torchaudio se inyectan acá,
-    # pero para Inception, RandomErasing exige correr DESPUÉS de ToDtype porque trabaja sobre tensores.
+
     if split == "train" and data_augmentation:
         ops.extend(pipeline.augmentation_train)
-        
+
     ops.append(transforms.Normalize(mean=pipeline.normalize_mean, std=pipeline.normalize_std))
     return transforms.Compose(ops)
 
 
 class _BaseSpectrogramDataset(TorchDataset):
-    # Shared logic for Gtzan and Custom; subclasses only set DEFAULT_ROOT.
     GENRES: list[str] = []
     DEFAULT_ROOT: str = ""
 
@@ -105,14 +95,11 @@ class _BaseSpectrogramDataset(TorchDataset):
         self.image_mode = pipeline.image_mode
         self.t = t if t is not None else _build_transforms(pipeline, split, data_augmentation)
 
-        # Build split first at song level; chunk filtering happens after.
         self.all_samples = self._build_split_samples(val_ratio, seed)
         self.samples = list(self.all_samples)
 
-        # Stash for reset_epoch_samples; None disables per-epoch re-sampling.
         self._random_chunks_number = random_chunks_number
 
-        # Apply per-song random chunk selection now (train only).
         if random_chunks_number is not None:
             self._apply_random_chunk_selection(random_chunks_number)
 
@@ -120,11 +107,9 @@ class _BaseSpectrogramDataset(TorchDataset):
             raise FileNotFoundError(f"No spectrograms found under {self.root}")
 
     def _discover_genres(self) -> list[str]:
-        # Subfolders of the root are the classes; keeps Custom agnostic of contents.
         return sorted(p.name for p in self.root.iterdir() if p.is_dir())
 
     def _build_split_samples(self, val_ratio: float, seed: int) -> list[tuple[str, int]]:
-        # One entry per chunk; songs are never split between train/val.
         samples: list[tuple[str, int]] = []
         rng = random.Random(seed)
 
@@ -154,7 +139,6 @@ class _BaseSpectrogramDataset(TorchDataset):
         return samples
 
     def _apply_random_chunk_selection(self, n: int) -> None:
-        # Sample up to n chunks per song_id without replacement.
         by_song: dict[str, list[tuple[str, int]]] = {}
         for path, label in self.all_samples:
             sid = Path(path).parent.name
@@ -168,8 +152,6 @@ class _BaseSpectrogramDataset(TorchDataset):
         print(f"Random chunk selection (k={n}) applied: {len(self.samples)} chunks across {len(by_song)} songs.")
 
     def reset_epoch_samples(self) -> None:
-        # Public hook called once per epoch; re-randomizes per-song chunks when configured.
-        # No-op unless the dataset was constructed with random_chunks_number.
         if self._random_chunks_number is None:
             return
         self._apply_random_chunk_selection(self._random_chunks_number)
@@ -185,10 +167,8 @@ class _BaseSpectrogramDataset(TorchDataset):
 
 
 class Gtzan(_BaseSpectrogramDataset):
-    # Reads mel-spectrograms under gtzan/spectrograms/.
     DEFAULT_ROOT = "gtzan/spectrograms"
 
 
 class Custom(_BaseSpectrogramDataset):
-    # Reads mel-spectrograms under dataset/spectrograms/; genres auto-discovered.
     DEFAULT_ROOT = "dataset/spectrograms"

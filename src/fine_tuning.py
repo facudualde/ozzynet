@@ -16,7 +16,6 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def set_seed(seed: int) -> None:
-    # Deterministic seeds for torch + numpy + cuda so re-runs are reproducible.
     torch.manual_seed(seed)
     np.random.seed(seed)
     if torch.cuda.is_available():
@@ -30,7 +29,6 @@ def format_duration(seconds: float) -> str:
 def _aggregate_by_song(
     loader: DataLoader, model: nn.Module,
 ) -> dict[str, tuple[torch.Tensor, int]]:
-    # Group per-chunk softmax probs by song_id; collapse to one (mean_probs, label) per song.
     model.eval()
     song_probs: dict[str, list[torch.Tensor]] = defaultdict(list)
     song_targets: dict[str, int] = {}
@@ -50,7 +48,6 @@ def train_one_epoch(
     criterion: nn.Module,
     optimizer: torch.optim.Optimizer,
 ) -> tuple[float, float]:
-    # One training pass; returns (avg_loss, accuracy_pct).
     model.train()
     total_loss, correct, total = 0.0, 0, 0
     for X, y, _ in loader:
@@ -72,7 +69,6 @@ def validate(
     model: nn.Module,
     criterion: nn.Module,
 ) -> tuple[float, float, float]:
-    # Returns (voting_acc_pct, chunk_acc_pct, avg_chunk_loss) — same shape as train.py.
     song_preds = _aggregate_by_song(loader, model)
     correct_songs = sum((probs.argmax().item() == label) for probs, label in song_preds.values())
 
@@ -101,7 +97,6 @@ def loop(
     save_dir: str,
     dataset_name: str,
 ) -> tuple[str, dict]:
-    # Train for `epochs`; track history and save only the best-by-voting-acc checkpoint.
     print("=" * 60)
     print(f"  Training InceptionV3 on {dataset_name} with soft-vote validation")
     print(f"  Device:  {DEVICE}")
@@ -160,7 +155,6 @@ def loop(
 
 
 def parse_args() -> argparse.Namespace:
-    # CLI: positional batch_size/epochs (matches make fine_tuning), optional tuning knobs.
     parser = argparse.ArgumentParser(description="Fine-tune InceptionV3 on mel-spectrograms.")
     parser.add_argument("batch_size", type=int)
     parser.add_argument("epochs", type=int)
@@ -191,7 +185,6 @@ def main() -> None:
     )
     val_ds = dataset_cls(
         split="val", model="inception", seed=args.seed,
-        # Validation uses the full chunk set per song for stable, comparable metrics.
     )
 
     train_loader = DataLoader(
