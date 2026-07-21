@@ -1,0 +1,12 @@
+Best voting acc: 71.8%
+
+Commands:
+
+* spectrograms (train):
+make spectrograms FLAGS="--type train --max-workers 8 --samples 100"
+
+* spectrograms (test):
+make spectrograms FLAGS="--type test --max-workers 8"
+
+* train:
+make train FLAGS="--dataset custom --lr 1e-3 --weight_decay 1e-4 --random_chunks_number 100"
